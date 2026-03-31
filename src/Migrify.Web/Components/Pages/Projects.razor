@@ -1,14 +1,153 @@
 @page "/projects"
 @attribute [Authorize]
+@inject IProjectRepository ProjectRepository
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
 
 <PageTitle>Projects - Migrify</PageTitle>
 
 <MudText Typo="Typo.h4" Class="mb-4">Projects</MudText>
 
-<MudAlert Severity="Severity.Info" Class="mb-4">
-    Project management will be available in version 0.0.2.
-</MudAlert>
+<MudButton Variant="Variant.Filled" Color="Color.Primary"
+           StartIcon="@Icons.Material.Filled.Add"
+           OnClick="OpenCreateDialog" Class="mb-4">
+    New Project
+</MudButton>
 
-<MudText Typo="Typo.body1">
-    Here you will be able to create and manage migration projects. Each project contains the source and destination settings for an email migration.
-</MudText>
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_projects.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">
+        No projects yet. Click "New Project" to create your first migration project.
+    </MudAlert>
+}
+else
+{
+    <MudTable Items="_projects" Hover="true" Striped="true" Dense="true" Elevation="2">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Status</MudTh>
+            <MudTh>IMAP Source</MudTh>
+            <MudTh>M365 Destination</MudTh>
+            <MudTh>Created</MudTh>
+            <MudTh Style="width: 120px;">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">
+                <MudText Typo="Typo.body1"><strong>@context.Name</strong></MudText>
+                @if (!string.IsNullOrEmpty(context.Description))
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Description</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="Status">
+                <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                    @context.Status
+                </MudChip>
+            </MudTd>
+            <MudTd DataLabel="IMAP Source">
+                @if (context.ImapSettings is not null && !string.IsNullOrEmpty(context.ImapSettings.Host))
+                {
+                    <MudText Typo="Typo.body2">@context.ImapSettings.Host:@context.ImapSettings.Port</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Not configured</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="M365 Destination">
+                @if (context.M365Settings is not null && !string.IsNullOrEmpty(context.M365Settings.TenantId))
+                {
+                    <MudText Typo="Typo.body2">@context.M365Settings.TenantId</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Not configured</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="Created">
+                <MudText Typo="Typo.body2">@context.CreatedAt.ToString("dd-MM-yyyy HH:mm")</MudText>
+            </MudTd>
+            <MudTd>
+                <MudTooltip Text="Edit">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                   OnClick="@(() => OpenEditDialog(context))" />
+                </MudTooltip>
+                <MudTooltip Text="Delete">
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                   Color="Color.Error"
+                                   OnClick="@(() => OpenDeleteDialog(context))" />
+                </MudTooltip>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    private List<Project> _projects = new();
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProjects();
+    }
+
+    private async Task LoadProjects()
+    {
+        _loading = true;
+        _projects = await ProjectRepository.GetAllAsync();
+        _loading = false;
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var dialog = await DialogService.ShowAsync<ProjectDialog>("New Project");
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+            await LoadProjects();
+    }
+
+    private async Task OpenEditDialog(Project project)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(ProjectDialog.ExistingProject), project }
+        };
+
+        var dialog = await DialogService.ShowAsync<ProjectDialog>("Edit Project", parameters);
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+            await LoadProjects();
+    }
+
+    private async Task OpenDeleteDialog(Project project)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(DeleteConfirmationDialog.ProjectName), project.Name }
+        };
+
+        var dialog = await DialogService.ShowAsync<DeleteConfirmationDialog>("Delete Project", parameters);
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+        {
+            await ProjectRepository.DeleteAsync(project.Id);
+            Snackbar.Add($"Project '{project.Name}' deleted.", Severity.Success);
+            await LoadProjects();
+        }
+    }
+
+    private static Color GetStatusColor(ProjectStatus status) => status switch
+    {
+        ProjectStatus.New => Color.Info,
+        ProjectStatus.Active => Color.Warning,
+        ProjectStatus.Completed => Color.Success,
+        _ => Color.Default
+    };
+}

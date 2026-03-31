@@ -1,5 +1,6 @@
 @page "/"
 @attribute [Authorize]
+@inject IProjectRepository ProjectRepository
 
 <PageTitle>Dashboard - Migrify</PageTitle>
 
@@ -10,7 +11,21 @@
         <MudCard>
             <MudCardContent>
                 <MudText Typo="Typo.h6">Projects</MudText>
-                <MudText Typo="Typo.body2" Color="Color.Secondary">No projects created yet</MudText>
+                @if (_loading)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                }
+                else if (_totalProjects == 0)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">No projects created yet</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.h4" Color="Color.Primary">@_totalProjects</MudText>
+                    <MudText Typo="Typo.caption">
+                        @_newCount New, @_activeCount Active, @_completedCount Completed
+                    </MudText>
+                }
             </MudCardContent>
         </MudCard>
     </MudItem>
@@ -31,3 +46,21 @@
         </MudCard>
     </MudItem>
 </MudGrid>
+
+@code {
+    private bool _loading = true;
+    private int _totalProjects;
+    private int _newCount;
+    private int _activeCount;
+    private int _completedCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var projects = await ProjectRepository.GetAllAsync();
+        _totalProjects = projects.Count;
+        _newCount = projects.Count(p => p.Status == ProjectStatus.New);
+        _activeCount = projects.Count(p => p.Status == ProjectStatus.Active);
+        _completedCount = projects.Count(p => p.Status == ProjectStatus.Completed);
+        _loading = false;
+    }
+}

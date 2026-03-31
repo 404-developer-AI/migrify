@@ -1,0 +1,409 @@
+@inject IProjectRepository ProjectRepository
+@inject ICredentialEncryptor CredentialEncryptor
+@inject IImapConnectionTester ImapTester
+@inject IImapAutoDiscoveryService ImapDiscovery
+@inject IM365ConnectionTester M365Tester
+@inject ISnackbar Snackbar
+
+<MudDialog Style="min-width: 600px;">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(IsEditMode ? "Edit Project" : "New Project")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true">
+            <MudTabPanel Text="General" Icon="@Icons.Material.Filled.Info">
+                <MudTextField @bind-Value="_name" Label="Project Name" Required="true"
+                              RequiredError="Project name is required" Class="mb-3" />
+                <MudTextField @bind-Value="_description" Label="Description" Lines="3" Class="mb-3" />
+                <MudSelect @bind-Value="_status" Label="Status" Class="mb-3">
+                    @foreach (var status in Enum.GetValues<ProjectStatus>())
+                    {
+                        <MudSelectItem Value="@status">@status</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudTabPanel>
+
+            <MudTabPanel Text="IMAP Source" Icon="@Icons.Material.Filled.Email">
+                <MudTextField @bind-Value="_imapUsername" Label="Email Address"
+                              Placeholder="user@example.com" Class="mb-3" />
+                <MudTextField @bind-Value="_imapPassword" Label="Password"
+                              InputType="InputType.Password"
+                              Placeholder="@(IsEditMode && _hasExistingImapPassword ? "Leave empty to keep current password" : "")"
+                              Class="mb-3" />
+                <MudButton Variant="Variant.Outlined" Color="Color.Info"
+                           StartIcon="@Icons.Material.Filled.AutoFixHigh"
+                           OnClick="AutoDetectImapSettings" Disabled="_isAutoDetecting"
+                           Class="mb-3">
+                    @if (_isAutoDetecting)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        <span>Detecting...</span>
+                    }
+                    else
+                    {
+                        <span>Auto-detect Settings</span>
+                    }
+                </MudButton>
+
+                <MudSwitch @bind-Value="_showAdvancedImap" Label="Advanced Settings"
+                           Color="Color.Primary" Class="mb-3" />
+                <MudCollapse Expanded="_showAdvancedImap">
+                    <MudTextField @bind-Value="_imapHost" Label="IMAP Host" Placeholder="imap.example.com" Class="mb-3" />
+                    <MudNumericField @bind-Value="_imapPort" Label="Port" Min="1" Max="65535" Class="mb-3" />
+                    <MudSelect @bind-Value="_imapEncryption" Label="Encryption" Class="mb-3">
+                        @foreach (var enc in Enum.GetValues<ImapEncryption>())
+                        {
+                            <MudSelectItem Value="@enc">@enc</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect @bind-Value="_imapAuthType" Label="Authentication" Class="mb-3">
+                        @foreach (var auth in Enum.GetValues<ImapAuthType>())
+                        {
+                            <MudSelectItem Value="@auth">@auth</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudCollapse>
+
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Cable"
+                           OnClick="TestImapConnection" Disabled="_isTestingImap">
+                    @if (_isTestingImap)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        <span>Testing...</span>
+                    }
+                    else
+                    {
+                        <span>Test Connection</span>
+                    }
+                </MudButton>
+            </MudTabPanel>
+
+            <MudTabPanel Text="M365 Destination" Icon="@Icons.Material.Filled.Cloud">
+                <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+                    This validates credentials only, not specific API permissions (e.g. Mail.ReadWrite).
+                </MudAlert>
+                <MudTextField @bind-Value="_m365TenantId" Label="Tenant ID" Class="mb-3" />
+                <MudTextField @bind-Value="_m365ClientId" Label="Client ID" Class="mb-3" />
+                <MudTextField @bind-Value="_m365ClientSecret" Label="Client Secret"
+                              InputType="InputType.Password"
+                              Placeholder="@(IsEditMode && _hasExistingM365Secret ? "Leave empty to keep current secret" : "")"
+                              Class="mb-3" />
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Cable"
+                           OnClick="TestM365Connection" Disabled="_isTestingM365">
+                    @if (_isTestingM365)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        <span>Testing...</span>
+                    }
+                    else
+                    {
+                        <span>Test Connection</span>
+                    }
+                </MudButton>
+            </MudTabPanel>
+        </MudTabs>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="_isSaving">
+            @(IsEditMode ? "Update" : "Create")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public Project? ExistingProject { get; set; }
+
+    private bool IsEditMode => ExistingProject is not null;
+
+    // General
+    private string _name = string.Empty;
+    private string? _description;
+    private ProjectStatus _status = ProjectStatus.New;
+
+    // IMAP
+    private string _imapHost = string.Empty;
+    private int _imapPort = 993;
+    private ImapEncryption _imapEncryption = ImapEncryption.SSL;
+    private ImapAuthType _imapAuthType = ImapAuthType.Password;
+    private string? _imapUsername;
+    private string? _imapPassword;
+    private bool _hasExistingImapPassword;
+    private bool _isTestingImap;
+    private bool _showAdvancedImap;
+    private bool _isAutoDetecting;
+
+    // M365
+    private string? _m365TenantId;
+    private string? _m365ClientId;
+    private string? _m365ClientSecret;
+    private bool _hasExistingM365Secret;
+    private bool _isTestingM365;
+
+    private bool _isSaving;
+
+    protected override void OnParametersSet()
+    {
+        if (ExistingProject is not null)
+        {
+            _name = ExistingProject.Name;
+            _description = ExistingProject.Description;
+            _status = ExistingProject.Status;
+
+            if (ExistingProject.ImapSettings is not null)
+            {
+                var imap = ExistingProject.ImapSettings;
+                _imapHost = imap.Host;
+                _imapPort = imap.Port;
+                _imapEncryption = imap.Encryption;
+                _imapAuthType = imap.AuthType;
+                _imapUsername = imap.Username;
+                _hasExistingImapPassword = !string.IsNullOrEmpty(imap.EncryptedPassword);
+                _showAdvancedImap = true;
+            }
+
+            if (ExistingProject.M365Settings is not null)
+            {
+                var m365 = ExistingProject.M365Settings;
+                _m365TenantId = m365.TenantId;
+                _m365ClientId = m365.ClientId;
+                _hasExistingM365Secret = !string.IsNullOrEmpty(m365.EncryptedClientSecret);
+            }
+        }
+    }
+
+    private async Task AutoDetectImapSettings()
+    {
+        if (string.IsNullOrWhiteSpace(_imapUsername) || !_imapUsername.Contains('@'))
+        {
+            Snackbar.Add("Please enter a valid email address first.", Severity.Warning);
+            return;
+        }
+
+        _isAutoDetecting = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await ImapDiscovery.DiscoverAsync(_imapUsername);
+
+            if (result is not null)
+            {
+                _imapHost = result.Host;
+                _imapPort = result.Port;
+                _imapEncryption = result.Encryption;
+
+                var message = result.ProviderName is not null
+                    ? $"Detected {result.ProviderName}: {result.Host}:{result.Port} ({result.Encryption})"
+                    : $"Detected: {result.Host}:{result.Port} ({result.Encryption})";
+                Snackbar.Add(message, Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add("Could not auto-detect IMAP settings. Please enter them manually.", Severity.Warning);
+                _showAdvancedImap = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Auto-detection failed: {ex.Message}", Severity.Error);
+            _showAdvancedImap = true;
+        }
+        finally
+        {
+            _isAutoDetecting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestImapConnection()
+    {
+        if (string.IsNullOrWhiteSpace(_imapHost))
+        {
+            Snackbar.Add("Please enter an IMAP host first.", Severity.Warning);
+            return;
+        }
+
+        _isTestingImap = true;
+        StateHasChanged();
+
+        try
+        {
+            var password = _imapPassword;
+            if (string.IsNullOrEmpty(password) && _hasExistingImapPassword && ExistingProject?.ImapSettings?.EncryptedPassword is not null)
+            {
+                password = CredentialEncryptor.Decrypt(ExistingProject.ImapSettings.EncryptedPassword);
+            }
+
+            var result = await ImapTester.TestAsync(_imapHost, _imapPort, _imapEncryption, _imapUsername, password);
+
+            if (result.Success)
+                Snackbar.Add("IMAP connection successful!", Severity.Success);
+            else
+                Snackbar.Add($"IMAP connection failed: {result.ErrorMessage}", Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error testing connection: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isTestingImap = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task TestM365Connection()
+    {
+        if (string.IsNullOrWhiteSpace(_m365TenantId) || string.IsNullOrWhiteSpace(_m365ClientId))
+        {
+            Snackbar.Add("Please enter Tenant ID and Client ID first.", Severity.Warning);
+            return;
+        }
+
+        _isTestingM365 = true;
+        StateHasChanged();
+
+        try
+        {
+            var secret = _m365ClientSecret;
+            if (string.IsNullOrEmpty(secret) && _hasExistingM365Secret && ExistingProject?.M365Settings?.EncryptedClientSecret is not null)
+            {
+                secret = CredentialEncryptor.Decrypt(ExistingProject.M365Settings.EncryptedClientSecret);
+            }
+
+            if (string.IsNullOrEmpty(secret))
+            {
+                Snackbar.Add("Please enter a Client Secret.", Severity.Warning);
+                return;
+            }
+
+            var result = await M365Tester.TestAsync(_m365TenantId!, _m365ClientId!, secret);
+
+            if (result.Success)
+                Snackbar.Add("M365 connection successful!", Severity.Success);
+            else
+                Snackbar.Add($"M365 connection failed: {result.ErrorMessage}", Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error testing connection: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isTestingM365 = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            Snackbar.Add("Project name is required.", Severity.Warning);
+            return;
+        }
+
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            Project project;
+
+            if (IsEditMode)
+            {
+                project = ExistingProject!;
+                project.Name = _name;
+                project.Description = _description;
+                project.Status = _status;
+
+                // IMAP settings
+                if (!string.IsNullOrWhiteSpace(_imapHost))
+                {
+                    project.ImapSettings ??= new ImapSettings();
+                    project.ImapSettings.Host = _imapHost;
+                    project.ImapSettings.Port = _imapPort;
+                    project.ImapSettings.Encryption = _imapEncryption;
+                    project.ImapSettings.AuthType = _imapAuthType;
+                    project.ImapSettings.Username = _imapUsername;
+
+                    if (!string.IsNullOrEmpty(_imapPassword))
+                        project.ImapSettings.EncryptedPassword = CredentialEncryptor.Encrypt(_imapPassword);
+                }
+
+                // M365 settings
+                if (!string.IsNullOrWhiteSpace(_m365TenantId) || !string.IsNullOrWhiteSpace(_m365ClientId))
+                {
+                    project.M365Settings ??= new M365Settings();
+                    project.M365Settings.TenantId = _m365TenantId;
+                    project.M365Settings.ClientId = _m365ClientId;
+
+                    if (!string.IsNullOrEmpty(_m365ClientSecret))
+                        project.M365Settings.EncryptedClientSecret = CredentialEncryptor.Encrypt(_m365ClientSecret);
+                }
+
+                await ProjectRepository.UpdateAsync(project);
+                Snackbar.Add("Project updated successfully.", Severity.Success);
+            }
+            else
+            {
+                project = new Project
+                {
+                    Name = _name,
+                    Description = _description,
+                    Status = _status
+                };
+
+                // IMAP settings
+                if (!string.IsNullOrWhiteSpace(_imapHost))
+                {
+                    project.ImapSettings = new ImapSettings
+                    {
+                        Host = _imapHost,
+                        Port = _imapPort,
+                        Encryption = _imapEncryption,
+                        AuthType = _imapAuthType,
+                        Username = _imapUsername,
+                        EncryptedPassword = !string.IsNullOrEmpty(_imapPassword)
+                            ? CredentialEncryptor.Encrypt(_imapPassword) : null
+                    };
+                }
+
+                // M365 settings
+                if (!string.IsNullOrWhiteSpace(_m365TenantId) || !string.IsNullOrWhiteSpace(_m365ClientId))
+                {
+                    project.M365Settings = new M365Settings
+                    {
+                        TenantId = _m365TenantId,
+                        ClientId = _m365ClientId,
+                        EncryptedClientSecret = !string.IsNullOrEmpty(_m365ClientSecret)
+                            ? CredentialEncryptor.Encrypt(_m365ClientSecret) : null
+                    };
+                }
+
+                await ProjectRepository.CreateAsync(project);
+                Snackbar.Add("Project created successfully.", Severity.Success);
+            }
+
+            MudDialog.Close(DialogResult.Ok(project));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving project: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

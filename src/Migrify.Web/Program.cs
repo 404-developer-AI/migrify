@@ -1,15 +1,17 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Migrify.Infrastructure;
 using Migrify.Infrastructure.Data;
 using Migrify.Web.Components;
 using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Database (SQLite voor v0.0.1, PostgreSQL vanaf v0.0.2)
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")
-        ?? "Data Source=migrify.db"));
+// Load local overrides (gitignored, for dev credentials)
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+// Infrastructure services (DbContext, repositories, encryption, connection testers)
+builder.Services.AddInfrastructure(builder.Configuration);
 
 // ASP.NET Identity
 builder.Services.AddIdentity<IdentityUser, IdentityRole>(options =>
@@ -45,7 +47,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    await db.Database.MigrateAsync();
 
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<IdentityUser>>();
     var adminEmail = app.Configuration["AdminUser:Email"] ?? "admin@migrify.local";
