@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Migrify.Core/Migrify.Core.csproj" />
+    <Project Path="src/Migrify.Infrastructure/Migrify.Infrastructure.csproj" />
+    <Project Path="src/Migrify.Web/Migrify.Web.csproj" />
+  </Folder>
+</Solution>

@@ -80,6 +80,9 @@ docker-compose.override.yml
 # Database
 # =========================
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 pgdata/

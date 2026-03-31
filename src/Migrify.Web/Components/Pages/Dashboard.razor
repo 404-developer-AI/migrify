@@ -1,0 +1,33 @@
+@page "/"
+@attribute [Authorize]
+
+<PageTitle>Dashboard - Migrify</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Dashboard</MudText>
+
+<MudGrid>
+    <MudItem xs="12" sm="4">
+        <MudCard>
+            <MudCardContent>
+                <MudText Typo="Typo.h6">Projects</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">No projects created yet</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="4">
+        <MudCard>
+            <MudCardContent>
+                <MudText Typo="Typo.h6">Migrations</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">No migrations started yet</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+    <MudItem xs="12" sm="4">
+        <MudCard>
+            <MudCardContent>
+                <MudText Typo="Typo.h6">Status</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Success">System operational</MudText>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>

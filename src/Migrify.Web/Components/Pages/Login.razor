@@ -1,0 +1,50 @@
+@page "/account/login"
+@layout LoginLayout
+@attribute [AllowAnonymous]
+
+<PageTitle>Sign in - Migrify</PageTitle>
+
+<MudCard Class="pa-4" Style="width: 100%;">
+    <MudCardContent>
+        <MudText Typo="Typo.h4" Align="Align.Center" Class="mb-6">Migrify</MudText>
+        <MudText Typo="Typo.subtitle1" Align="Align.Center" Class="mb-4">Sign in</MudText>
+
+        @if (_hasError)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-4">Invalid credentials. Please try again.</MudAlert>
+        }
+
+        <form method="post" action="/api/account/login">
+            <AntiforgeryToken />
+
+            <div class="mb-4">
+                <label for="email" class="mud-input-label" style="color: var(--mud-palette-text-primary);">Email address</label>
+                <input type="email" id="email" name="_loginModel.Email"
+                       style="width:100%; padding:12px; border:1px solid var(--mud-palette-lines-default); border-radius:4px; font-size:1rem; background: var(--mud-palette-surface); color: var(--mud-palette-text-primary);"
+                       required />
+            </div>
+
+            <div class="mb-4">
+                <label for="password" class="mud-input-label" style="color: var(--mud-palette-text-primary);">Password</label>
+                <input type="password" id="password" name="_loginModel.Password"
+                       style="width:100%; padding:12px; border:1px solid var(--mud-palette-lines-default); border-radius:4px; font-size:1rem; background: var(--mud-palette-surface); color: var(--mud-palette-text-primary);"
+                       required />
+            </div>
+
+            <MudButton ButtonType="ButtonType.Submit"
+                       Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       FullWidth="true"
+                       Class="mt-2">
+                Sign in
+            </MudButton>
+        </form>
+    </MudCardContent>
+</MudCard>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    private bool _hasError => !string.IsNullOrEmpty(Error);
+}

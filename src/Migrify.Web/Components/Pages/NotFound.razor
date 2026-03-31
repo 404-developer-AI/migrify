@@ -1,0 +1,17 @@
+@page "/not-found"
+@attribute [AllowAnonymous]
+<PageTitle>Not found - Migrify</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="d-flex align-center" Style="min-height: 100vh;">
+    <MudCard Class="pa-4" Style="width: 100%;">
+        <MudCardContent>
+            <MudText Typo="Typo.h4" Align="Align.Center" Class="mb-4">Page not found</MudText>
+            <MudText Typo="Typo.body1" Align="Align.Center">
+                The page you are looking for does not exist.
+            </MudText>
+            <MudButton Href="/" Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Class="mt-4">
+                Back to Dashboard
+            </MudButton>
+        </MudCardContent>
+    </MudCard>
+</MudContainer>

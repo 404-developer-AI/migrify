@@ -1,0 +1,137 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+
+<MudThemeProvider @bind-IsDarkMode="_isDarkMode" Theme="_theme" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true">
+        <MudText Typo="Typo.h6" Class="ml-2">Migrify</MudText>
+        <MudSpacer />
+        <MudTooltip Text="@(_isDarkMode ? "Light theme" : "Dark theme")">
+            <MudIconButton Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+                           Color="Color.Inherit"
+                           OnClick="ToggleTheme" />
+        </MudTooltip>
+        <AuthorizeView>
+            <Authorized>
+                <MudTooltip Text="Sign out">
+                    <form method="post" action="/api/account/logout">
+                        <AntiforgeryToken />
+                        <MudIconButton Icon="@Icons.Material.Filled.Logout"
+                                       Color="Color.Inherit"
+                                       ButtonType="ButtonType.Submit" />
+                    </form>
+                </MudTooltip>
+            </Authorized>
+        </AuthorizeView>
+    </MudAppBar>
+
+    <MudDrawer Open="true" Variant="DrawerVariant.Persistent" Elevation="2">
+        <MudDrawerHeader Dense="true">
+            <MudText Typo="Typo.subtitle1">Navigation</MudText>
+        </MudDrawerHeader>
+        <MudNavMenu>
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">Dashboard</MudNavLink>
+            <MudNavLink Href="/projects" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Folder">Projects</MudNavLink>
+            <MudNavLink Href="/settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Settings">Settings</MudNavLink>
+        </MudNavMenu>
+        <MudSpacer />
+        <div class="pa-4" style="border-top: 1px solid var(--mud-palette-lines-default);">
+            <div class="d-flex align-center mb-1">
+                <MudIcon Icon="@Icons.Material.Filled.AccessTime" Size="Size.Small" Class="mr-2" Style="color: var(--mud-palette-text-secondary);" />
+                <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">@_serverTime</MudText>
+            </div>
+            <div class="d-flex align-center">
+                <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Class="mr-2" Style="color: var(--mud-palette-text-secondary);" />
+                <MudText Typo="Typo.caption" Style="color: var(--mud-palette-text-secondary);">v@(AppVersion)</MudText>
+            </div>
+        </div>
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.Large" Class="my-4">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    public const string AppVersion = "0.0.1";
+
+    private bool _isDarkMode;
+    private string _serverTime = "";
+    private Timer? _timer;
+
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary = "#0078d4",
+            Error = "#e94560",
+            Background = "#f4f6f8",
+            Surface = "#ffffff",
+            AppbarBackground = "#0078d4",
+            AppbarText = "#ffffff",
+            DrawerBackground = "#ffffff",
+            DrawerText = "#1a1a2e"
+        },
+        PaletteDark = new PaletteDark
+        {
+            Primary = "#0078d4",
+            Error = "#e94560",
+            Background = "#1a1a2e",
+            Surface = "#16213e",
+            TextPrimary = "#ffffffde",
+            TextSecondary = "#ffffff99",
+            TextDisabled = "#ffffff61",
+            AppbarBackground = "#16213e",
+            AppbarText = "#ffffff",
+            DrawerBackground = "#16213e",
+            DrawerText = "#ffffff"
+        }
+    };
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var prefersDark = await JS.InvokeAsync<bool>("eval",
+                "window.matchMedia('(prefers-color-scheme: dark)').matches");
+            if (prefersDark != _isDarkMode)
+            {
+                _isDarkMode = prefersDark;
+                StateHasChanged();
+            }
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        UpdateServerTime();
+        _timer = new Timer(_ => InvokeAsync(() =>
+        {
+            UpdateServerTime();
+            StateHasChanged();
+        }), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    private void UpdateServerTime()
+    {
+        _serverTime = DateTime.Now.ToString("dd-MM-yyyy HH:mm:ss");
+    }
+
+    private void ToggleTheme()
+    {
+        _isDarkMode = !_isDarkMode;
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+}
