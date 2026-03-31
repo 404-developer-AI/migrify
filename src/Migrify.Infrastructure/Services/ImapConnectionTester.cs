@@ -10,26 +10,26 @@ namespace Migrify.Infrastructure.Services;
 
 public class ImapConnectionTester : IImapConnectionTester
 {
-    public async Task<ConnectionTestResult> TestAsync(
+    public Task<ConnectionTestResult> TestAsync(
         string host, int port, ImapEncryption encryption, string? username, string? password)
+    {
+        return TestAsync(host, port, encryption, ImapAuthType.Password, username, password, null);
+    }
+
+    public async Task<ConnectionTestResult> TestAsync(
+        string host, int port, ImapEncryption encryption,
+        ImapAuthType authType, string? username, string? password, string? oauthAccessToken)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
         try
         {
-            var socketOptions = encryption switch
-            {
-                ImapEncryption.SSL => SecureSocketOptions.SslOnConnect,
-                ImapEncryption.TLS => SecureSocketOptions.SslOnConnect,
-                ImapEncryption.STARTTLS => SecureSocketOptions.StartTls,
-                ImapEncryption.None => SecureSocketOptions.None,
-                _ => SecureSocketOptions.Auto
-            };
+            var socketOptions = MapEncryption(encryption);
 
             // Try normal hostname connection first (MailKit handles DNS + SSL/TLS properly)
             try
             {
-                return await ConnectAndTestAsync(host, port, socketOptions, username, password, cts.Token);
+                return await ConnectAndTestAsync(host, port, socketOptions, authType, username, password, oauthAccessToken, cts.Token);
             }
             catch (Exception) when (!cts.IsCancellationRequested)
             {
@@ -43,7 +43,7 @@ public class ImapConnectionTester : IImapConnectionTester
                 using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 await socket.ConnectAsync(ipv4, port, cts.Token);
 
-                return await ConnectAndTestAsync(socket, host, port, socketOptions, username, password, cts.Token);
+                return await ConnectAndTestAsync(socket, host, port, socketOptions, authType, username, password, oauthAccessToken, cts.Token);
             }
         }
         catch (OperationCanceledException)
@@ -58,20 +58,22 @@ public class ImapConnectionTester : IImapConnectionTester
 
     private static async Task<ConnectionTestResult> ConnectAndTestAsync(
         string host, int port, SecureSocketOptions socketOptions,
-        string? username, string? password, CancellationToken cancellationToken)
+        ImapAuthType authType, string? username, string? password, string? oauthAccessToken,
+        CancellationToken cancellationToken)
     {
         using var client = CreateClient();
         await client.ConnectAsync(host, port, socketOptions, cancellationToken);
-        return await AuthenticateAndDisconnectAsync(client, username, password, cancellationToken);
+        return await AuthenticateAndDisconnectAsync(client, authType, username, password, oauthAccessToken, cancellationToken);
     }
 
     private static async Task<ConnectionTestResult> ConnectAndTestAsync(
         Socket socket, string host, int port, SecureSocketOptions socketOptions,
-        string? username, string? password, CancellationToken cancellationToken)
+        ImapAuthType authType, string? username, string? password, string? oauthAccessToken,
+        CancellationToken cancellationToken)
     {
         using var client = CreateClient();
         await client.ConnectAsync(socket, host, port, socketOptions, cancellationToken);
-        return await AuthenticateAndDisconnectAsync(client, username, password, cancellationToken);
+        return await AuthenticateAndDisconnectAsync(client, authType, username, password, oauthAccessToken, cancellationToken);
     }
 
     private static ImapClient CreateClient()
@@ -85,12 +87,29 @@ public class ImapConnectionTester : IImapConnectionTester
     }
 
     private static async Task<ConnectionTestResult> AuthenticateAndDisconnectAsync(
-        ImapClient client, string? username, string? password, CancellationToken cancellationToken)
+        ImapClient client, ImapAuthType authType, string? username, string? password, string? oauthAccessToken,
+        CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
+        if (authType == ImapAuthType.OAuth2 && !string.IsNullOrEmpty(oauthAccessToken))
+        {
+            var oauth2 = new SaslMechanismOAuth2(username ?? string.Empty, oauthAccessToken);
+            await client.AuthenticateAsync(oauth2, cancellationToken);
+        }
+        else if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
+        {
             await client.AuthenticateAsync(username, password, cancellationToken);
+        }
 
         await client.DisconnectAsync(true, cancellationToken);
         return new ConnectionTestResult(true);
     }
+
+    private static SecureSocketOptions MapEncryption(ImapEncryption encryption) => encryption switch
+    {
+        ImapEncryption.SSL => SecureSocketOptions.SslOnConnect,
+        ImapEncryption.TLS => SecureSocketOptions.SslOnConnect,
+        ImapEncryption.STARTTLS => SecureSocketOptions.StartTls,
+        ImapEncryption.None => SecureSocketOptions.None,
+        _ => SecureSocketOptions.Auto
+    };
 }

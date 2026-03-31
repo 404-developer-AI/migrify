@@ -19,9 +19,17 @@ public class ImapMailboxExplorer : IImapMailboxExplorer
         _logger = logger;
     }
 
-    public async Task<ImapExploreResult> ExploreAsync(
+    public Task<ImapExploreResult> ExploreAsync(
         string host, int port, ImapEncryption encryption,
         string username, string password,
+        CancellationToken cancellationToken = default)
+    {
+        return ExploreAsync(host, port, encryption, ImapAuthType.Password, username, password, null, cancellationToken);
+    }
+
+    public async Task<ImapExploreResult> ExploreAsync(
+        string host, int port, ImapEncryption encryption,
+        ImapAuthType authType, string username, string? password, string? oauthAccessToken,
         CancellationToken cancellationToken = default)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -73,8 +81,6 @@ public class ImapMailboxExplorer : IImapMailboxExplorer
                 resolvedIp = ipv4.ToString();
                 _logger.LogDebug("Falling back to IPv4: {Ip}:{Port}", ipv4, port);
 
-                // Fresh client — previous one may be in a bad state after failed SSL handshake
-                // Socket must stay alive as long as the client uses it
                 client = CreateClient();
                 fallbackSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 await fallbackSocket.ConnectAsync(ipv4, port, ct);
@@ -84,8 +90,18 @@ public class ImapMailboxExplorer : IImapMailboxExplorer
 
             try
             {
-                _logger.LogDebug("Authenticating as {Username}", username);
-                await client.AuthenticateAsync(username, password, ct);
+                _logger.LogDebug("Authenticating as {Username} (AuthType: {AuthType})", username, authType);
+
+                if (authType == ImapAuthType.OAuth2 && !string.IsNullOrEmpty(oauthAccessToken))
+                {
+                    var oauth2 = new SaslMechanismOAuth2(username, oauthAccessToken);
+                    await client.AuthenticateAsync(oauth2, ct);
+                }
+                else
+                {
+                    await client.AuthenticateAsync(username, password ?? string.Empty, ct);
+                }
+
                 _logger.LogDebug("Authenticated, exploring folders...");
 
                 var folders = await GetFolderInfoAsync(client, ct);

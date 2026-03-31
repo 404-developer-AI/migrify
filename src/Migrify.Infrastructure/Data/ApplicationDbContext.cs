@@ -42,6 +42,13 @@ public class ApplicationDbContext : IdentityDbContext
             entity.Property(e => e.LastTestedServerAddress).HasMaxLength(255);
             entity.Property(e => e.ResolvedIpAddress).HasMaxLength(45);
 
+            // OAuth2
+            entity.Property(e => e.OAuthClientId).HasMaxLength(255);
+            entity.Property(e => e.EncryptedOAuthClientSecret).HasMaxLength(500);
+            entity.Property(e => e.EncryptedOAuthAccessToken).HasMaxLength(2000);
+            entity.Property(e => e.EncryptedOAuthRefreshToken).HasMaxLength(500);
+            entity.Property(e => e.OAuthProvider).HasMaxLength(50);
+
             entity.HasOne(e => e.Project)
                 .WithOne(p => p.ImapSettings)
                 .HasForeignKey<ImapSettings>(e => e.ProjectId)

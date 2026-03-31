@@ -27,6 +27,14 @@ public static class DependencyInjection
         });
         services.AddTransient<IImapAutoDiscoveryService, ImapAutoDiscoveryService>();
 
+        // OAuth2
+        services.AddHttpClient("GoogleOAuth", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
+        services.AddTransient<IOAuthTokenService, GoogleOAuthTokenService>();
+        services.AddScoped<IImapOAuthCredentialProvider, ImapOAuthCredentialProvider>();
+
         return services;
     }
 }

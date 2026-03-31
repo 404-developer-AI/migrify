@@ -3,7 +3,12 @@
 @inject IImapConnectionTester ImapTester
 @inject IImapAutoDiscoveryService ImapDiscovery
 @inject IM365ConnectionTester M365Tester
+@inject IOAuthTokenService OAuthTokenService
+@inject IImapOAuthCredentialProvider OAuthCredentialProvider
+@inject IJSRuntime JS
 @inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
 
 <MudDialog Style="min-width: 600px;">
     <TitleContent>
@@ -26,10 +31,67 @@
             <MudTabPanel Text="IMAP Source" Icon="@Icons.Material.Filled.Email">
                 <MudTextField @bind-Value="_imapUsername" Label="Email Address"
                               Placeholder="user@example.com" Class="mb-3" />
-                <MudTextField @bind-Value="_imapPassword" Label="Password"
-                              InputType="InputType.Password"
-                              Placeholder="@(IsEditMode && _hasExistingImapPassword ? "Leave empty to keep current password" : "")"
-                              Class="mb-3" />
+
+                @if (_imapAuthType == ImapAuthType.Password)
+                {
+                    <MudTextField @bind-Value="_imapPassword" Label="Password"
+                                  InputType="InputType.Password"
+                                  Placeholder="@(IsEditMode && _hasExistingImapPassword ? "Leave empty to keep current password" : "")"
+                                  Class="mb-3" />
+                }
+                else
+                {
+                    <!-- OAuth2 UI -->
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+                        OAuth2 lets you connect without sharing your password.
+                        You need a Google Cloud project with OAuth2 credentials.
+                        See <MudLink Href="https://github.com/your-repo/migrify/blob/main/docs/google-oauth2-setup.md" Target="_blank">setup guide</MudLink> for instructions.
+                    </MudAlert>
+
+                    <MudText Typo="Typo.caption" Class="mb-2">Supported OAuth2 Providers</MudText>
+                    <MudChipSet T="string" ReadOnly="true" Class="mb-3">
+                        <MudChip T="string" Color="Color.Primary" Variant="Variant.Filled">Google / Gmail</MudChip>
+                        <MudChip T="string" Color="Color.Default" Variant="Variant.Outlined" Disabled="true">Microsoft (coming soon)</MudChip>
+                        <MudChip T="string" Color="Color.Default" Variant="Variant.Outlined" Disabled="true">Yahoo (coming soon)</MudChip>
+                    </MudChipSet>
+
+                    <MudTextField @bind-Value="_oauthClientId" Label="Google Client ID"
+                                  HelperText="From Google Cloud Console > APIs & Services > Credentials"
+                                  Class="mb-3" />
+                    <MudTextField @bind-Value="_oauthClientSecret" Label="Google Client Secret"
+                                  InputType="InputType.Password"
+                                  Placeholder="@(IsEditMode && _hasExistingOAuthClientSecret ? "Leave empty to keep current secret" : "")"
+                                  Class="mb-3" />
+
+                    <div class="d-flex align-center gap-3 mb-3">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Link"
+                                   OnClick="StartOAuthAuthorization"
+                                   Disabled="_isAuthorizing || string.IsNullOrWhiteSpace(_oauthClientId)">
+                            @if (_isAuthorizing)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                                <span>Authorizing...</span>
+                            }
+                            else
+                            {
+                                <span>Authorize with Google</span>
+                            }
+                        </MudButton>
+
+                        @if (_hasOAuthTokens)
+                        {
+                            <MudChip T="string" Color="Color.Success" Variant="Variant.Filled" Size="Size.Small">
+                                Authorized
+                                @if (_oauthTokenExpiry.HasValue)
+                                {
+                                    <text> — token expires @_oauthTokenExpiry.Value.ToLocalTime().ToString("dd-MM-yyyy HH:mm")</text>
+                                }
+                            </MudChip>
+                        }
+                    </div>
+                }
+
                 <MudButton Variant="Variant.Outlined" Color="Color.Info"
                            StartIcon="@Icons.Material.Filled.AutoFixHigh"
                            OnClick="AutoDetectImapSettings" Disabled="_isAutoDetecting"
@@ -139,6 +201,15 @@
     private bool _showAdvancedImap;
     private bool _isAutoDetecting;
 
+    // OAuth2
+    private string? _oauthClientId;
+    private string? _oauthClientSecret;
+    private bool _hasExistingOAuthClientSecret;
+    private bool _hasOAuthTokens;
+    private DateTime? _oauthTokenExpiry;
+    private bool _isAuthorizing;
+    private DotNetObjectReference<ProjectDialog>? _dotNetRef;
+
     // M365
     private string? _m365TenantId;
     private string? _m365ClientId;
@@ -166,6 +237,12 @@
                 _imapUsername = imap.Username;
                 _hasExistingImapPassword = !string.IsNullOrEmpty(imap.EncryptedPassword);
                 _showAdvancedImap = true;
+
+                // OAuth2
+                _oauthClientId = imap.OAuthClientId;
+                _hasExistingOAuthClientSecret = !string.IsNullOrEmpty(imap.EncryptedOAuthClientSecret);
+                _hasOAuthTokens = !string.IsNullOrEmpty(imap.EncryptedOAuthRefreshToken);
+                _oauthTokenExpiry = imap.OAuthTokenExpiresAtUtc;
             }
 
             if (ExistingProject.M365Settings is not null)
@@ -176,6 +253,107 @@
                 _hasExistingM365Secret = !string.IsNullOrEmpty(m365.EncryptedClientSecret);
             }
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("migrifyOAuth.registerCallback", _dotNetRef);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnOAuthCallback(bool success, string projectId, string error)
+    {
+        if (success)
+        {
+            // Reload project to get updated tokens
+            if (ExistingProject is not null)
+            {
+                var updated = await ProjectRepository.GetByIdAsync(ExistingProject.Id);
+                if (updated?.ImapSettings is not null && ExistingProject!.ImapSettings is not null)
+                {
+                    _hasOAuthTokens = !string.IsNullOrEmpty(updated.ImapSettings.EncryptedOAuthRefreshToken);
+                    _oauthTokenExpiry = updated.ImapSettings.OAuthTokenExpiresAtUtc;
+                    ExistingProject.ImapSettings.EncryptedOAuthAccessToken = updated.ImapSettings.EncryptedOAuthAccessToken;
+                    ExistingProject.ImapSettings.EncryptedOAuthRefreshToken = updated.ImapSettings.EncryptedOAuthRefreshToken;
+                    ExistingProject.ImapSettings.OAuthTokenExpiresAtUtc = updated.ImapSettings.OAuthTokenExpiresAtUtc;
+                    ExistingProject.ImapSettings.OAuthProvider = updated.ImapSettings.OAuthProvider;
+                }
+            }
+
+            Snackbar.Add("Google account authorized successfully!", Severity.Success);
+        }
+        else
+        {
+            Snackbar.Add($"Authorization failed: {error}", Severity.Error);
+        }
+
+        _isAuthorizing = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task StartOAuthAuthorization()
+    {
+        if (string.IsNullOrWhiteSpace(_oauthClientId))
+        {
+            Snackbar.Add("Please enter a Google Client ID first.", Severity.Warning);
+            return;
+        }
+
+        // Must save the project first so the callback endpoint can look up client credentials
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            Snackbar.Add("Please enter a project name first.", Severity.Warning);
+            return;
+        }
+
+        _isAuthorizing = true;
+        StateHasChanged();
+
+        try
+        {
+            // Save project with OAuth client credentials before starting the flow
+            await SaveOAuthCredentialsToProject();
+
+            var redirectUri = $"{NavigationManager.BaseUri.TrimEnd('/')}/oauth/callback/google";
+            var projectId = ExistingProject?.Id ?? Guid.Empty;
+
+            if (projectId == Guid.Empty)
+            {
+                Snackbar.Add("Project must be saved before authorizing. Creating project...", Severity.Info);
+                await Save();
+                return;
+            }
+
+            var authUrl = OAuthTokenService.GetAuthorizationUrl(projectId, _oauthClientId, redirectUri);
+            await JS.InvokeVoidAsync("migrifyOAuth.openPopup", authUrl);
+        }
+        catch (Exception ex)
+        {
+            _isAuthorizing = false;
+            Snackbar.Add($"Error starting authorization: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task SaveOAuthCredentialsToProject()
+    {
+        if (ExistingProject is null) return;
+
+        ExistingProject.ImapSettings ??= new ImapSettings();
+        ExistingProject.ImapSettings.OAuthClientId = _oauthClientId;
+        ExistingProject.ImapSettings.OAuthProvider = "Google";
+        ExistingProject.ImapSettings.AuthType = ImapAuthType.OAuth2;
+
+        if (!string.IsNullOrEmpty(_oauthClientSecret))
+        {
+            ExistingProject.ImapSettings.EncryptedOAuthClientSecret = CredentialEncryptor.Encrypt(_oauthClientSecret);
+            _hasExistingOAuthClientSecret = true;
+        }
+
+        await ProjectRepository.UpdateAsync(ExistingProject);
     }
 
     private async Task AutoDetectImapSettings()
@@ -235,13 +413,38 @@
 
         try
         {
-            var password = _imapPassword;
-            if (string.IsNullOrEmpty(password) && _hasExistingImapPassword && ExistingProject?.ImapSettings?.EncryptedPassword is not null)
-            {
-                password = CredentialEncryptor.Decrypt(ExistingProject.ImapSettings.EncryptedPassword);
-            }
+            ConnectionTestResult result;
 
-            var result = await ImapTester.TestAsync(_imapHost, _imapPort, _imapEncryption, _imapUsername, password);
+            if (_imapAuthType == ImapAuthType.OAuth2)
+            {
+                if (ExistingProject?.Id is null || !_hasOAuthTokens)
+                {
+                    Snackbar.Add("Please authorize with Google first.", Severity.Warning);
+                    return;
+                }
+
+                // Reload from DB to get fresh tokens (callback endpoint writes to a different DbContext scope)
+                var freshProject = await ProjectRepository.GetByIdAsync(ExistingProject.Id);
+                if (freshProject?.ImapSettings is null || string.IsNullOrEmpty(freshProject.ImapSettings.EncryptedOAuthRefreshToken))
+                {
+                    Snackbar.Add("Please authorize with Google first.", Severity.Warning);
+                    return;
+                }
+
+                var accessToken = await OAuthCredentialProvider.GetAccessTokenAsync(freshProject.ImapSettings);
+                result = await ImapTester.TestAsync(_imapHost, _imapPort, _imapEncryption,
+                    ImapAuthType.OAuth2, _imapUsername, null, accessToken);
+            }
+            else
+            {
+                var password = _imapPassword;
+                if (string.IsNullOrEmpty(password) && _hasExistingImapPassword && ExistingProject?.ImapSettings?.EncryptedPassword is not null)
+                {
+                    password = CredentialEncryptor.Decrypt(ExistingProject.ImapSettings.EncryptedPassword);
+                }
+
+                result = await ImapTester.TestAsync(_imapHost, _imapPort, _imapEncryption, _imapUsername, password);
+            }
 
             if (result.Success)
                 Snackbar.Add("IMAP connection successful!", Severity.Success);
@@ -334,8 +537,29 @@
                     project.ImapSettings.AuthType = _imapAuthType;
                     project.ImapSettings.Username = _imapUsername;
 
-                    if (!string.IsNullOrEmpty(_imapPassword))
-                        project.ImapSettings.EncryptedPassword = CredentialEncryptor.Encrypt(_imapPassword);
+                    if (_imapAuthType == ImapAuthType.Password)
+                    {
+                        if (!string.IsNullOrEmpty(_imapPassword))
+                            project.ImapSettings.EncryptedPassword = CredentialEncryptor.Encrypt(_imapPassword);
+
+                        // Clear OAuth fields when switching to password
+                        project.ImapSettings.OAuthClientId = null;
+                        project.ImapSettings.EncryptedOAuthClientSecret = null;
+                        project.ImapSettings.EncryptedOAuthAccessToken = null;
+                        project.ImapSettings.EncryptedOAuthRefreshToken = null;
+                        project.ImapSettings.OAuthTokenExpiresAtUtc = null;
+                        project.ImapSettings.OAuthProvider = null;
+                    }
+                    else
+                    {
+                        project.ImapSettings.OAuthClientId = _oauthClientId;
+                        project.ImapSettings.OAuthProvider = "Google";
+                        if (!string.IsNullOrEmpty(_oauthClientSecret))
+                            project.ImapSettings.EncryptedOAuthClientSecret = CredentialEncryptor.Encrypt(_oauthClientSecret);
+
+                        // Clear password when using OAuth2
+                        project.ImapSettings.EncryptedPassword = null;
+                    }
                 }
 
                 // M365 settings
@@ -370,10 +594,21 @@
                         Port = _imapPort,
                         Encryption = _imapEncryption,
                         AuthType = _imapAuthType,
-                        Username = _imapUsername,
-                        EncryptedPassword = !string.IsNullOrEmpty(_imapPassword)
-                            ? CredentialEncryptor.Encrypt(_imapPassword) : null
+                        Username = _imapUsername
                     };
+
+                    if (_imapAuthType == ImapAuthType.Password)
+                    {
+                        project.ImapSettings.EncryptedPassword = !string.IsNullOrEmpty(_imapPassword)
+                            ? CredentialEncryptor.Encrypt(_imapPassword) : null;
+                    }
+                    else
+                    {
+                        project.ImapSettings.OAuthClientId = _oauthClientId;
+                        project.ImapSettings.OAuthProvider = "Google";
+                        project.ImapSettings.EncryptedOAuthClientSecret = !string.IsNullOrEmpty(_oauthClientSecret)
+                            ? CredentialEncryptor.Encrypt(_oauthClientSecret) : null;
+                    }
                 }
 
                 // M365 settings
@@ -406,4 +641,18 @@
     }
 
     private void Cancel() => MudDialog.Cancel();
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("migrifyOAuth.unregisterCallback");
+        }
+        catch
+        {
+            // JS interop may fail if circuit is already disconnected
+        }
+
+        _dotNetRef?.Dispose();
+    }
 }

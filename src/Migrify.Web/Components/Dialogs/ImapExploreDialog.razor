@@ -1,5 +1,6 @@
 @inject IImapMailboxExplorer ImapExplorer
 @inject ICredentialEncryptor CredentialEncryptor
+@inject IImapOAuthCredentialProvider OAuthCredentialProvider
 @inject IProjectRepository ProjectRepository
 @inject ISnackbar Snackbar
 
@@ -105,9 +106,15 @@
             return;
         }
 
-        if (string.IsNullOrEmpty(imap.EncryptedPassword))
+        if (imap.AuthType == ImapAuthType.Password && string.IsNullOrEmpty(imap.EncryptedPassword))
         {
             Snackbar.Add("No IMAP password configured. Edit the project to set one.", Severity.Warning);
+            return;
+        }
+
+        if (imap.AuthType == ImapAuthType.OAuth2 && string.IsNullOrEmpty(imap.EncryptedOAuthRefreshToken))
+        {
+            Snackbar.Add("No OAuth2 tokens found. Edit the project and authorize with Google first.", Severity.Warning);
             return;
         }
 
@@ -117,11 +124,20 @@
 
         try
         {
-            var password = CredentialEncryptor.Decrypt(imap.EncryptedPassword);
-
-            _result = await ImapExplorer.ExploreAsync(
-                imap.Host, imap.Port, imap.Encryption,
-                imap.Username ?? string.Empty, password);
+            if (imap.AuthType == ImapAuthType.OAuth2)
+            {
+                var accessToken = await OAuthCredentialProvider.GetAccessTokenAsync(imap);
+                _result = await ImapExplorer.ExploreAsync(
+                    imap.Host, imap.Port, imap.Encryption,
+                    ImapAuthType.OAuth2, imap.Username ?? string.Empty, null, accessToken);
+            }
+            else
+            {
+                var password = CredentialEncryptor.Decrypt(imap.EncryptedPassword!);
+                _result = await ImapExplorer.ExploreAsync(
+                    imap.Host, imap.Port, imap.Encryption,
+                    imap.Username ?? string.Empty, password);
+            }
 
             if (_result.Success)
             {
