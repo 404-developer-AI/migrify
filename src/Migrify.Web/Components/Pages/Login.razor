@@ -4,43 +4,41 @@
 
 <PageTitle>Sign in - Migrify</PageTitle>
 
-<MudCard Class="pa-4" Style="width: 100%;">
-    <MudCardContent>
-        <MudText Typo="Typo.h4" Align="Align.Center" Class="mb-6">Migrify</MudText>
-        <MudText Typo="Typo.subtitle1" Align="Align.Center" Class="mb-4">Sign in</MudText>
+<div class="login-card">
+    <div style="text-align: center; margin-bottom: 32px;">
+        <MudIcon Icon="@Icons.Material.Outlined.SwapHoriz"
+                 Style="font-size: 40px; color: white;" />
+        <h1 class="login-title">Migrify</h1>
+        <p class="login-subtitle">Sign in to your account</p>
+    </div>
 
-        @if (_hasError)
-        {
-            <MudAlert Severity="Severity.Error" Class="mb-4">Invalid credentials. Please try again.</MudAlert>
-        }
+    @if (_hasError)
+    {
+        <div class="login-error">
+            Invalid credentials. Please try again.
+        </div>
+    }
 
-        <form method="post" action="/api/account/login">
-            <AntiforgeryToken />
+    <form method="post" action="/api/account/login">
+        <AntiforgeryToken />
 
-            <div class="mb-4">
-                <label for="email" class="mud-input-label" style="color: var(--mud-palette-text-primary);">Email address</label>
-                <input type="email" id="email" name="_loginModel.Email"
-                       style="width:100%; padding:12px; border:1px solid var(--mud-palette-lines-default); border-radius:4px; font-size:1rem; background: var(--mud-palette-surface); color: var(--mud-palette-text-primary);"
-                       required />
-            </div>
+        <div style="margin-bottom: 20px;">
+            <label for="email" class="login-label">Email address</label>
+            <input type="email" id="email" name="_loginModel.Email"
+                   class="login-input" placeholder="you@company.com" required />
+        </div>
 
-            <div class="mb-4">
-                <label for="password" class="mud-input-label" style="color: var(--mud-palette-text-primary);">Password</label>
-                <input type="password" id="password" name="_loginModel.Password"
-                       style="width:100%; padding:12px; border:1px solid var(--mud-palette-lines-default); border-radius:4px; font-size:1rem; background: var(--mud-palette-surface); color: var(--mud-palette-text-primary);"
-                       required />
-            </div>
+        <div style="margin-bottom: 28px;">
+            <label for="password" class="login-label">Password</label>
+            <input type="password" id="password" name="_loginModel.Password"
+                   class="login-input" placeholder="Enter your password" required />
+        </div>
 
-            <MudButton ButtonType="ButtonType.Submit"
-                       Variant="Variant.Filled"
-                       Color="Color.Primary"
-                       FullWidth="true"
-                       Class="mt-2">
-                Sign in
-            </MudButton>
-        </form>
-    </MudCardContent>
-</MudCard>
+        <button type="submit" class="login-button">
+            Sign in
+        </button>
+    </form>
+</div>
 
 @code {
     [SupplyParameterFromQuery(Name = "error")]

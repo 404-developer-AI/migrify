@@ -19,7 +19,7 @@ window.migrifyOAuth = {
             if (event.data && event.data.type === 'oauth-callback') {
                 dotNetRef.invokeMethodAsync('OnOAuthCallback',
                     event.data.success,
-                    event.data.projectId || '',
+                    event.data.jobId || '',
                     event.data.error || '');
             }
         };

@@ -14,6 +14,7 @@ public class ApplicationDbContext : IdentityDbContext
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<ImapSettings> ImapSettings => Set<ImapSettings>();
     public DbSet<M365Settings> M365Settings => Set<M365Settings>();
+    public DbSet<MigrationJob> MigrationJobs => Set<MigrationJob>();
     public DbSet<ImapProviderPreset> ImapProviderPresets => Set<ImapProviderPreset>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -30,10 +31,25 @@ public class ApplicationDbContext : IdentityDbContext
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");
         });
 
+        builder.Entity<MigrationJob>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.SourceEmail).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.DestinationEmail).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");
+
+            entity.HasOne(e => e.Project)
+                .WithMany(p => p.MigrationJobs)
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         builder.Entity<ImapSettings>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.HasIndex(e => e.ProjectId).IsUnique();
+            entity.HasIndex(e => e.MigrationJobId).IsUnique();
             entity.Property(e => e.Host).HasMaxLength(255);
             entity.Property(e => e.Username).HasMaxLength(255);
             entity.Property(e => e.EncryptedPassword).HasMaxLength(500);
@@ -49,23 +65,23 @@ public class ApplicationDbContext : IdentityDbContext
             entity.Property(e => e.EncryptedOAuthRefreshToken).HasMaxLength(500);
             entity.Property(e => e.OAuthProvider).HasMaxLength(50);
 
-            entity.HasOne(e => e.Project)
-                .WithOne(p => p.ImapSettings)
-                .HasForeignKey<ImapSettings>(e => e.ProjectId)
+            entity.HasOne(e => e.MigrationJob)
+                .WithOne(j => j.ImapSettings)
+                .HasForeignKey<ImapSettings>(e => e.MigrationJobId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<M365Settings>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.HasIndex(e => e.ProjectId).IsUnique();
+            entity.HasIndex(e => e.MigrationJobId).IsUnique();
             entity.Property(e => e.TenantId).HasMaxLength(100);
             entity.Property(e => e.ClientId).HasMaxLength(100);
             entity.Property(e => e.EncryptedClientSecret).HasMaxLength(500);
 
-            entity.HasOne(e => e.Project)
-                .WithOne(p => p.M365Settings)
-                .HasForeignKey<M365Settings>(e => e.ProjectId)
+            entity.HasOne(e => e.MigrationJob)
+                .WithOne(j => j.M365Settings)
+                .HasForeignKey<M365Settings>(e => e.MigrationJobId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

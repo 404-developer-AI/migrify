@@ -7,18 +7,18 @@ namespace Migrify.Infrastructure.Services;
 public class ImapOAuthCredentialProvider : IImapOAuthCredentialProvider
 {
     private readonly IOAuthTokenService _tokenService;
-    private readonly IProjectRepository _projectRepository;
+    private readonly IMigrationJobRepository _jobRepository;
     private readonly ICredentialEncryptor _encryptor;
     private readonly ILogger<ImapOAuthCredentialProvider> _logger;
 
     public ImapOAuthCredentialProvider(
         IOAuthTokenService tokenService,
-        IProjectRepository projectRepository,
+        IMigrationJobRepository jobRepository,
         ICredentialEncryptor encryptor,
         ILogger<ImapOAuthCredentialProvider> logger)
     {
         _tokenService = tokenService;
-        _projectRepository = projectRepository;
+        _jobRepository = jobRepository;
         _encryptor = encryptor;
         _logger = logger;
     }
@@ -57,9 +57,9 @@ public class ImapOAuthCredentialProvider : IImapOAuthCredentialProvider
             settings.EncryptedOAuthRefreshToken = _encryptor.Encrypt(result.RefreshToken);
             settings.OAuthTokenExpiresAtUtc = result.ExpiresAtUtc;
 
-            var project = await _projectRepository.GetByIdAsync(settings.ProjectId);
-            if (project is not null)
-                await _projectRepository.UpdateAsync(project);
+            var job = await _jobRepository.GetByIdAsync(settings.MigrationJobId);
+            if (job is not null)
+                await _jobRepository.UpdateAsync(job);
 
             _logger.LogDebug("Token refreshed successfully, new expiry: {Expiry}", result.ExpiresAtUtc);
 
@@ -67,9 +67,9 @@ public class ImapOAuthCredentialProvider : IImapOAuthCredentialProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Token refresh failed for project {ProjectId}", settings.ProjectId);
+            _logger.LogError(ex, "Token refresh failed for job {JobId}", settings.MigrationJobId);
             throw new InvalidOperationException(
-                "OAuth2 token refresh failed. Please re-authorize your Google account in project settings.", ex);
+                "OAuth2 token refresh failed. Please re-authorize your Google account in job settings.", ex);
         }
     }
 }

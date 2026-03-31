@@ -9,6 +9,5 @@ public class Project
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
-    public ImapSettings? ImapSettings { get; set; }
-    public M365Settings? M365Settings { get; set; }
+    public ICollection<MigrationJob> MigrationJobs { get; set; } = new List<MigrationJob>();
 }

@@ -21,10 +21,10 @@ public class GoogleOAuthTokenService : IOAuthTokenService
         _logger = logger;
     }
 
-    public string GetAuthorizationUrl(Guid projectId, string clientId, string redirectUri)
+    public string GetAuthorizationUrl(Guid jobId, string clientId, string redirectUri)
     {
         var state = Convert.ToBase64String(
-            System.Text.Encoding.UTF8.GetBytes($"{projectId}"));
+            System.Text.Encoding.UTF8.GetBytes($"{jobId}"));
 
         var query = new Dictionary<string, string>
         {

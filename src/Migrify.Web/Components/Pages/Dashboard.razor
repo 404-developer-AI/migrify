@@ -1,47 +1,74 @@
 @page "/"
 @attribute [Authorize]
 @inject IProjectRepository ProjectRepository
+@inject IMigrationJobRepository JobRepository
 
 <PageTitle>Dashboard - Migrify</PageTitle>
 
-<MudText Typo="Typo.h4" Class="mb-4">Dashboard</MudText>
+<MudText Typo="Typo.h4" Class="page-title mb-6">Dashboard</MudText>
 
-<MudGrid>
+<MudGrid Spacing="4">
     <MudItem xs="12" sm="4">
-        <MudCard>
-            <MudCardContent>
-                <MudText Typo="Typo.h6">Projects</MudText>
+        <MudCard Class="stat-card" Elevation="0">
+            <MudCardContent Class="pa-0">
+                <div class="stat-icon">
+                    <MudIcon Icon="@Icons.Material.Outlined.Folder" Style="font-size: inherit;" />
+                </div>
+                <div class="stat-label">Projects</div>
                 @if (_loading)
                 {
                     <MudProgressCircular Size="Size.Small" Indeterminate="true" />
                 }
                 else if (_totalProjects == 0)
                 {
-                    <MudText Typo="Typo.body2" Color="Color.Secondary">No projects created yet</MudText>
+                    <MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">No projects created yet</MudText>
                 }
                 else
                 {
-                    <MudText Typo="Typo.h4" Color="Color.Primary">@_totalProjects</MudText>
-                    <MudText Typo="Typo.caption">
-                        @_newCount New, @_activeCount Active, @_completedCount Completed
-                    </MudText>
+                    <div class="stat-number" style="color: var(--mud-palette-primary);">@_totalProjects</div>
+                    <div class="stat-detail">
+                        @_newCount New · @_activeCount Active · @_completedCount Completed
+                    </div>
                 }
             </MudCardContent>
         </MudCard>
     </MudItem>
     <MudItem xs="12" sm="4">
-        <MudCard>
-            <MudCardContent>
-                <MudText Typo="Typo.h6">Migrations</MudText>
-                <MudText Typo="Typo.body2" Color="Color.Secondary">No migrations started yet</MudText>
+        <MudCard Class="stat-card" Elevation="0">
+            <MudCardContent Class="pa-0">
+                <div class="stat-icon">
+                    <MudIcon Icon="@Icons.Material.Outlined.Email" Style="font-size: inherit;" />
+                </div>
+                <div class="stat-label">Migrations</div>
+                @if (_loading)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                }
+                else if (_totalJobs == 0)
+                {
+                    <MudText Typo="Typo.body2" Style="color: var(--mud-palette-text-secondary);">No migration jobs created yet</MudText>
+                }
+                else
+                {
+                    <div class="stat-number" style="color: var(--mud-palette-primary);">@_totalJobs</div>
+                    <div class="stat-detail">
+                        @_runningJobs Running · @_completedJobs Completed · @_failedJobs Failed
+                    </div>
+                }
             </MudCardContent>
         </MudCard>
     </MudItem>
     <MudItem xs="12" sm="4">
-        <MudCard>
-            <MudCardContent>
-                <MudText Typo="Typo.h6">Status</MudText>
-                <MudText Typo="Typo.body2" Color="Color.Success">System operational</MudText>
+        <MudCard Class="stat-card" Elevation="0">
+            <MudCardContent Class="pa-0">
+                <div class="stat-icon">
+                    <MudIcon Icon="@Icons.Material.Outlined.MonitorHeart" Style="font-size: inherit;" />
+                </div>
+                <div class="stat-label">Status</div>
+                <div class="stat-number" style="color: var(--mud-palette-success);">
+                    <MudIcon Icon="@Icons.Material.Outlined.CheckCircle" Style="font-size: 1.5rem; vertical-align: middle; margin-right: 8px;" />
+                    <span style="font-size: 1.125rem; vertical-align: middle;">Operational</span>
+                </div>
             </MudCardContent>
         </MudCard>
     </MudItem>
@@ -54,6 +81,11 @@
     private int _activeCount;
     private int _completedCount;
 
+    private int _totalJobs;
+    private int _runningJobs;
+    private int _completedJobs;
+    private int _failedJobs;
+
     protected override async Task OnInitializedAsync()
     {
         var projects = await ProjectRepository.GetAllAsync();
@@ -61,6 +93,13 @@
         _newCount = projects.Count(p => p.Status == ProjectStatus.New);
         _activeCount = projects.Count(p => p.Status == ProjectStatus.Active);
         _completedCount = projects.Count(p => p.Status == ProjectStatus.Completed);
+
+        var jobCounts = await JobRepository.GetStatusCountsAsync();
+        _totalJobs = jobCounts.Values.Sum();
+        _runningJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Running);
+        _completedJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Completed);
+        _failedJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Failed);
+
         _loading = false;
     }
 }

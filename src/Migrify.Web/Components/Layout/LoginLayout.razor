@@ -5,13 +5,9 @@
 <MudDialogProvider />
 <MudSnackbarProvider />
 
-<MudLayout>
-    <MudMainContent>
-        <MudContainer MaxWidth="MaxWidth.Small" Class="d-flex align-center" Style="min-height: 100vh;">
-            @Body
-        </MudContainer>
-    </MudMainContent>
-</MudLayout>
+<div class="login-background">
+    @Body
+</div>
 
 @code {
     private bool _isDarkMode;
@@ -20,36 +16,19 @@
     {
         PaletteLight = new PaletteLight
         {
-            Primary = "#0078d4",
-            Error = "#e94560",
-            Background = "#f4f6f8",
-            Surface = "#ffffff"
+            Primary = "#6366F1",
+            Error = "#EF4444",
+            Background = "#6366F1",
+            Surface = "#6366F1"
         },
         PaletteDark = new PaletteDark
         {
-            Primary = "#0078d4",
-            Error = "#e94560",
-            Background = "#1a1a2e",
-            Surface = "#16213e",
-            TextPrimary = "#ffffffde",
-            TextSecondary = "#ffffff99",
-            TextDisabled = "#ffffff61"
+            Primary = "#818CF8",
+            Error = "#F87171",
+            Background = "#0F1117",
+            Surface = "#0F1117",
+            TextPrimary = "#F3F4F6",
+            TextSecondary = "#9CA3AF"
         }
     };
-
-    [Inject] private IJSRuntime JS { get; set; } = default!;
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender)
-        {
-            var prefersDark = await JS.InvokeAsync<bool>("eval",
-                "window.matchMedia('(prefers-color-scheme: dark)').matches");
-            if (prefersDark != _isDarkMode)
-            {
-                _isDarkMode = prefersDark;
-                StateHasChanged();
-            }
-        }
-    }
 }

@@ -6,7 +6,7 @@
 
 <PageTitle>Projects - Migrify</PageTitle>
 
-<MudText Typo="Typo.h4" Class="mb-4">Projects</MudText>
+<MudText Typo="Typo.h4" Class="page-title mb-6">Projects</MudText>
 
 <MudButton Variant="Variant.Filled" Color="Color.Primary"
            StartIcon="@Icons.Material.Filled.Add"
@@ -26,60 +26,32 @@ else if (_projects.Count == 0)
 }
 else
 {
-    <MudTable Items="_projects" Hover="true" Striped="true" Dense="true" Elevation="2">
+    <MudTable Items="_projects" Hover="true" Elevation="0">
         <HeaderContent>
             <MudTh>Name</MudTh>
             <MudTh>Status</MudTh>
-            <MudTh>IMAP Source</MudTh>
-            <MudTh>M365 Destination</MudTh>
+            <MudTh>Jobs</MudTh>
             <MudTh>Created</MudTh>
-            <MudTh Style="width: 160px;">Actions</MudTh>
+            <MudTh Style="width: 100px;">Actions</MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Name">
-                <MudText Typo="Typo.body1"><strong>@context.Name</strong></MudText>
-                @if (!string.IsNullOrEmpty(context.Description))
-                {
-                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.Description</MudText>
-                }
+                <MudLink Href="@($"/projects/{context.Id}")" Typo="Typo.body1">
+                    <strong>@context.Name</strong>
+                </MudLink>
             </MudTd>
             <MudTd DataLabel="Status">
                 <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
                     @context.Status
                 </MudChip>
             </MudTd>
-            <MudTd DataLabel="IMAP Source">
-                @if (context.ImapSettings is not null && !string.IsNullOrEmpty(context.ImapSettings.Host))
-                {
-                    <MudText Typo="Typo.body2">@context.ImapSettings.Host:@context.ImapSettings.Port</MudText>
-                }
-                else
-                {
-                    <MudText Typo="Typo.body2" Color="Color.Secondary">Not configured</MudText>
-                }
-            </MudTd>
-            <MudTd DataLabel="M365 Destination">
-                @if (context.M365Settings is not null && !string.IsNullOrEmpty(context.M365Settings.TenantId))
-                {
-                    <MudText Typo="Typo.body2">@context.M365Settings.TenantId</MudText>
-                }
-                else
-                {
-                    <MudText Typo="Typo.body2" Color="Color.Secondary">Not configured</MudText>
-                }
+            <MudTd DataLabel="Jobs">
+                <MudText Typo="Typo.body2">@context.MigrationJobs.Count</MudText>
             </MudTd>
             <MudTd DataLabel="Created">
                 <MudText Typo="Typo.body2">@context.CreatedAt.ToString("dd-MM-yyyy HH:mm")</MudText>
             </MudTd>
             <MudTd>
-                @if (context.ImapSettings is not null && !string.IsNullOrEmpty(context.ImapSettings.Host))
-                {
-                    <MudTooltip Text="Explore Mailbox">
-                        <MudIconButton Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small"
-                                       Color="Color.Primary"
-                                       OnClick="@(() => OpenExploreDialog(context))" />
-                    </MudTooltip>
-                }
                 <MudTooltip Text="Edit">
                     <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
                                    OnClick="@(() => OpenEditDialog(context))" />
@@ -112,7 +84,8 @@ else
 
     private async Task OpenCreateDialog()
     {
-        var dialog = await DialogService.ShowAsync<ProjectDialog>("New Project");
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<ProjectDialog>("New Project", options);
         var result = await dialog.Result;
 
         if (result is not null && !result.Canceled)
@@ -126,22 +99,12 @@ else
             { nameof(ProjectDialog.ExistingProject), project }
         };
 
-        var dialog = await DialogService.ShowAsync<ProjectDialog>("Edit Project", parameters);
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<ProjectDialog>("Edit Project", parameters, options);
         var result = await dialog.Result;
 
         if (result is not null && !result.Canceled)
             await LoadProjects();
-    }
-
-    private async Task OpenExploreDialog(Project project)
-    {
-        var parameters = new DialogParameters
-        {
-            { nameof(ImapExploreDialog.Project), project }
-        };
-
-        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
-        await DialogService.ShowAsync<ImapExploreDialog>("Explore Mailbox", parameters, options);
     }
 
     private async Task OpenDeleteDialog(Project project)

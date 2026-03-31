@@ -17,6 +17,7 @@ public static class DependencyInjection
 
         services.AddSingleton<ICredentialEncryptor, AesCredentialEncryptor>();
         services.AddScoped<IProjectRepository, ProjectRepository>();
+        services.AddScoped<IMigrationJobRepository, MigrationJobRepository>();
         services.AddTransient<IImapConnectionTester, ImapConnectionTester>();
         services.AddTransient<IImapMailboxExplorer, ImapMailboxExplorer>();
         services.AddTransient<IM365ConnectionTester, M365ConnectionTester>();

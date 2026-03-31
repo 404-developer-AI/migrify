@@ -119,7 +119,7 @@ app.MapPost("/api/account/logout", async (SignInManager<IdentityUser> signInMana
 app.MapGet("/oauth/callback/google", async (
     HttpContext context,
     IOAuthTokenService oauthService,
-    IProjectRepository projectRepository,
+    IMigrationJobRepository jobRepository,
     ICredentialEncryptor encryptor,
     ILogger<Program> logger) =>
 {
@@ -140,23 +140,23 @@ app.MapGet("/oauth/callback/google", async (
 
     try
     {
-        // Decode state → projectId
-        var projectIdStr = Encoding.UTF8.GetString(Convert.FromBase64String(state));
-        if (!Guid.TryParse(projectIdStr, out var projectId))
+        // Decode state → jobId
+        var jobIdStr = Encoding.UTF8.GetString(Convert.FromBase64String(state));
+        if (!Guid.TryParse(jobIdStr, out var jobId))
         {
             return Results.Content(BuildOAuthCallbackHtml(false, "", "Invalid state parameter."), "text/html");
         }
 
-        var project = await projectRepository.GetByIdAsync(projectId);
-        if (project?.ImapSettings is null)
+        var job = await jobRepository.GetByIdAsync(jobId);
+        if (job?.ImapSettings is null)
         {
-            return Results.Content(BuildOAuthCallbackHtml(false, "", "Project not found."), "text/html");
+            return Results.Content(BuildOAuthCallbackHtml(false, "", "Migration job not found."), "text/html");
         }
 
-        var imap = project.ImapSettings;
+        var imap = job.ImapSettings;
         if (string.IsNullOrEmpty(imap.OAuthClientId) || string.IsNullOrEmpty(imap.EncryptedOAuthClientSecret))
         {
-            return Results.Content(BuildOAuthCallbackHtml(false, "", "OAuth2 credentials not configured for this project."), "text/html");
+            return Results.Content(BuildOAuthCallbackHtml(false, "", "OAuth2 credentials not configured for this job."), "text/html");
         }
 
         var clientId = imap.OAuthClientId;
@@ -170,10 +170,10 @@ app.MapGet("/oauth/callback/google", async (
         imap.EncryptedOAuthRefreshToken = encryptor.Encrypt(result.RefreshToken);
         imap.OAuthTokenExpiresAtUtc = result.ExpiresAtUtc;
         imap.OAuthProvider = "Google";
-        await projectRepository.UpdateAsync(project);
+        await jobRepository.UpdateAsync(job);
 
-        logger.LogInformation("OAuth2 tokens stored for project {ProjectId}", projectId);
-        return Results.Content(BuildOAuthCallbackHtml(true, projectId.ToString(), ""), "text/html");
+        logger.LogInformation("OAuth2 tokens stored for job {JobId}", jobId);
+        return Results.Content(BuildOAuthCallbackHtml(true, jobId.ToString(), ""), "text/html");
     }
     catch (Exception ex)
     {
@@ -188,7 +188,7 @@ app.MapRazorComponents<App>()
 
 app.Run();
 
-static string BuildOAuthCallbackHtml(bool success, string projectId, string error)
+static string BuildOAuthCallbackHtml(bool success, string jobId, string error)
 {
     var encodedError = System.Net.WebUtility.HtmlEncode(error).Replace("'", "\\'");
     var message = success
@@ -205,7 +205,7 @@ static string BuildOAuthCallbackHtml(bool success, string projectId, string erro
         + "  window.opener.postMessage({"
         + "    type: 'oauth-callback',"
         + "    success: " + successJs + ","
-        + "    projectId: '" + projectId + "',"
+        + "    jobId: '" + jobId + "',"
         + "    error: '" + encodedError + "'"
         + "  }, '*');"
         + "}"

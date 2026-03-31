@@ -4,7 +4,7 @@ namespace Migrify.Core.Interfaces;
 
 public interface IOAuthTokenService
 {
-    string GetAuthorizationUrl(Guid projectId, string clientId, string redirectUri);
+    string GetAuthorizationUrl(Guid jobId, string clientId, string redirectUri);
 
     Task<OAuthTokenResult> ExchangeCodeAsync(string code, string clientId, string clientSecret, string redirectUri);
 

@@ -3,7 +3,7 @@ namespace Migrify.Core.Entities;
 public class ImapSettings
 {
     public Guid Id { get; set; }
-    public Guid ProjectId { get; set; }
+    public Guid MigrationJobId { get; set; }
     public string Host { get; set; } = string.Empty;
     public int Port { get; set; } = 993;
     public ImapEncryption Encryption { get; set; } = ImapEncryption.SSL;
@@ -13,7 +13,7 @@ public class ImapSettings
     public string? LastTestedServerAddress { get; set; }
     public string? ResolvedIpAddress { get; set; }
 
-    // OAuth2 per-project credentials (e.g. Google Cloud Console Client ID/Secret)
+    // OAuth2 credentials (e.g. Google Cloud Console Client ID/Secret)
     public string? OAuthClientId { get; set; }
     public string? EncryptedOAuthClientSecret { get; set; }
 
@@ -25,5 +25,5 @@ public class ImapSettings
     // OAuth2 provider identifier (e.g. "Google")
     public string? OAuthProvider { get; set; }
 
-    public Project Project { get; set; } = null!;
+    public MigrationJob MigrationJob { get; set; } = null!;
 }

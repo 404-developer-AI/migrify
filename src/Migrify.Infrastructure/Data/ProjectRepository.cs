@@ -16,8 +16,7 @@ public class ProjectRepository : IProjectRepository
     public async Task<List<Project>> GetAllAsync()
     {
         return await _db.Projects
-            .Include(p => p.ImapSettings)
-            .Include(p => p.M365Settings)
+            .Include(p => p.MigrationJobs)
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
     }
@@ -25,8 +24,7 @@ public class ProjectRepository : IProjectRepository
     public async Task<Project?> GetByIdAsync(Guid id)
     {
         return await _db.Projects
-            .Include(p => p.ImapSettings)
-            .Include(p => p.M365Settings)
+            .Include(p => p.MigrationJobs)
             .FirstOrDefaultAsync(p => p.Id == id);
     }
 
@@ -35,12 +33,6 @@ public class ProjectRepository : IProjectRepository
         project.Id = Guid.NewGuid();
         project.CreatedAt = DateTime.UtcNow;
         project.UpdatedAt = DateTime.UtcNow;
-
-        if (project.ImapSettings is not null)
-            project.ImapSettings.Id = Guid.NewGuid();
-
-        if (project.M365Settings is not null)
-            project.M365Settings.Id = Guid.NewGuid();
 
         _db.Projects.Add(project);
         await _db.SaveChangesAsync();

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Migrify.Infrastructure.Data;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Migrify.Infrastructure.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260331212923_AddMigrationJobs")]
+    partial class AddMigrationJobs
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -692,9 +695,6 @@ namespace Migrify.Infrastructure.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
-                    b.Property<Guid>("MigrationJobId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("OAuthClientId")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
@@ -709,6 +709,9 @@ namespace Migrify.Infrastructure.Migrations
                     b.Property<int>("Port")
                         .HasColumnType("integer");
 
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("ResolvedIpAddress")
                         .HasMaxLength(45)
                         .HasColumnType("character varying(45)");
@@ -719,7 +722,7 @@ namespace Migrify.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MigrationJobId")
+                    b.HasIndex("ProjectId")
                         .IsUnique();
 
                     b.ToTable("ImapSettings");
@@ -739,7 +742,7 @@ namespace Migrify.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
-                    b.Property<Guid>("MigrationJobId")
+                    b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("TenantId")
@@ -748,7 +751,7 @@ namespace Migrify.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MigrationJobId")
+                    b.HasIndex("ProjectId")
                         .IsUnique();
 
                     b.ToTable("M365Settings");
@@ -770,6 +773,10 @@ namespace Migrify.Infrastructure.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("EncryptedPassword")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -787,6 +794,13 @@ namespace Migrify.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
+
+                    b.Property<bool>("UseOwnCredentials")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Username")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.HasKey("Id");
 
@@ -883,24 +897,24 @@ namespace Migrify.Infrastructure.Migrations
 
             modelBuilder.Entity("Migrify.Core.Entities.ImapSettings", b =>
                 {
-                    b.HasOne("Migrify.Core.Entities.MigrationJob", "MigrationJob")
+                    b.HasOne("Migrify.Core.Entities.Project", "Project")
                         .WithOne("ImapSettings")
-                        .HasForeignKey("Migrify.Core.Entities.ImapSettings", "MigrationJobId")
+                        .HasForeignKey("Migrify.Core.Entities.ImapSettings", "ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("MigrationJob");
+                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("Migrify.Core.Entities.M365Settings", b =>
                 {
-                    b.HasOne("Migrify.Core.Entities.MigrationJob", "MigrationJob")
+                    b.HasOne("Migrify.Core.Entities.Project", "Project")
                         .WithOne("M365Settings")
-                        .HasForeignKey("Migrify.Core.Entities.M365Settings", "MigrationJobId")
+                        .HasForeignKey("Migrify.Core.Entities.M365Settings", "ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("MigrationJob");
+                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("Migrify.Core.Entities.MigrationJob", b =>
@@ -914,15 +928,12 @@ namespace Migrify.Infrastructure.Migrations
                     b.Navigation("Project");
                 });
 
-            modelBuilder.Entity("Migrify.Core.Entities.MigrationJob", b =>
+            modelBuilder.Entity("Migrify.Core.Entities.Project", b =>
                 {
                     b.Navigation("ImapSettings");
 
                     b.Navigation("M365Settings");
-                });
 
-            modelBuilder.Entity("Migrify.Core.Entities.Project", b =>
-                {
                     b.Navigation("MigrationJobs");
                 });
 #pragma warning restore 612, 618
