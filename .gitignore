@@ -1,0 +1,85 @@
+# =========================
+# Project Planning (intern)
+# =========================
+ROADMAP.md
+ARCHITECTURE.md
+NOTFORCLAUDE.md
+CLAUDE.md
+.claude/
+
+# =========================
+# Credentials & Secrets
+# =========================
+appsettings.Development.json
+appsettings.Local.json
+appsettings.*.json
+!appsettings.json
+*.pfx
+*.key
+*.pem
+*.p12
+.env
+.env.*
+secrets/
+credentials/
+**/client_secret*.json
+**/service_account*.json
+**/oauth_token*.json
+
+# =========================
+# .NET / Visual Studio
+# =========================
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+bld/
+[Ll]og/
+[Ll]ogs/
+*.log
+
+# NuGet
+*.nupkg
+**/packages/*
+*.nuget.props
+*.nuget.targets
+project.lock.json
+
+# =========================
+# IDE
+# =========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# =========================
+# OS
+# =========================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+.DS_Store?
+
+# =========================
+# Docker
+# =========================
+docker-compose.override.yml
+
+# =========================
+# Database
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+pgdata/
