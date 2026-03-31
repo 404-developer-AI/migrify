@@ -39,6 +39,8 @@ public class ApplicationDbContext : IdentityDbContext
             entity.Property(e => e.EncryptedPassword).HasMaxLength(500);
             entity.Property(e => e.Encryption).HasConversion<string>().HasMaxLength(20);
             entity.Property(e => e.AuthType).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.LastTestedServerAddress).HasMaxLength(255);
+            entity.Property(e => e.ResolvedIpAddress).HasMaxLength(45);
 
             entity.HasOne(e => e.Project)
                 .WithOne(p => p.ImapSettings)

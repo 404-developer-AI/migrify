@@ -10,6 +10,8 @@ public class ImapSettings
     public ImapAuthType AuthType { get; set; } = ImapAuthType.Password;
     public string? Username { get; set; }
     public string? EncryptedPassword { get; set; }
+    public string? LastTestedServerAddress { get; set; }
+    public string? ResolvedIpAddress { get; set; }
 
     public Project Project { get; set; } = null!;
 }

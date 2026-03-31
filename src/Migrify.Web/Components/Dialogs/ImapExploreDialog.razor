@@ -1,0 +1,152 @@
+@inject IImapMailboxExplorer ImapExplorer
+@inject ICredentialEncryptor CredentialEncryptor
+@inject IProjectRepository ProjectRepository
+@inject ISnackbar Snackbar
+
+<MudDialog Style="min-width: 700px;">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Explore Mailbox — @Project.Name</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_result is not null && _result.Success)
+        {
+            <MudGrid Class="mb-4">
+                <MudItem xs="6">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Server Address</MudText>
+                    <MudText Typo="Typo.body2">@_result.ServerAddress</MudText>
+                </MudItem>
+                <MudItem xs="6">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Resolved IP</MudText>
+                    <MudText Typo="Typo.body2">@(_result.ResolvedIpAddress ?? "Unknown")</MudText>
+                </MudItem>
+            </MudGrid>
+
+            <MudText Typo="Typo.subtitle2" Class="mb-2">
+                @_result.Folders.Count folder(s) — @_result.Folders.Sum(f => f.MessageCount).ToString("N0") total messages
+            </MudText>
+
+            <MudTable Items="_result.Folders" Hover="true" Striped="true" Dense="true" Elevation="1">
+                <HeaderContent>
+                    <MudTh>Folder</MudTh>
+                    <MudTh Style="text-align: right;">Messages</MudTh>
+                    <MudTh>First Message</MudTh>
+                    <MudTh>Last Message</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Folder">
+                        <MudText Typo="Typo.body2">@context.FullName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Messages" Style="text-align: right;">
+                        <MudText Typo="Typo.body2">@context.MessageCount.ToString("N0")</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="First Message">
+                        <MudText Typo="Typo.body2">@(context.FirstMessageDate?.ToString("dd-MM-yyyy") ?? "—")</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Last Message">
+                        <MudText Typo="Typo.body2">@(context.LastMessageDate?.ToString("dd-MM-yyyy") ?? "—")</MudText>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+        else if (_result is not null && !_result.Success)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">
+                @_result.ErrorMessage
+            </MudAlert>
+        }
+        else if (_isExploring)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-3" />
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Connecting to @Project.ImapSettings!.Host and exploring folders...
+            </MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Click "Explore" to connect to the IMAP server and retrieve folder information.
+            </MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.FolderOpen"
+                   OnClick="Explore" Disabled="_isExploring">
+            @if (_isExploring)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                <span>Exploring...</span>
+            }
+            else
+            {
+                <span>Explore</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public Project Project { get; set; } = null!;
+
+    private ImapExploreResult? _result;
+    private bool _isExploring;
+
+    private async Task Explore()
+    {
+        var imap = Project.ImapSettings;
+        if (imap is null || string.IsNullOrWhiteSpace(imap.Host))
+        {
+            Snackbar.Add("IMAP settings are not configured for this project.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(imap.EncryptedPassword))
+        {
+            Snackbar.Add("No IMAP password configured. Edit the project to set one.", Severity.Warning);
+            return;
+        }
+
+        _isExploring = true;
+        _result = null;
+        StateHasChanged();
+
+        try
+        {
+            var password = CredentialEncryptor.Decrypt(imap.EncryptedPassword);
+
+            _result = await ImapExplorer.ExploreAsync(
+                imap.Host, imap.Port, imap.Encryption,
+                imap.Username ?? string.Empty, password);
+
+            if (_result.Success)
+            {
+                // Save resolved IP and server address to ImapSettings
+                imap.LastTestedServerAddress = _result.ServerAddress;
+                imap.ResolvedIpAddress = _result.ResolvedIpAddress;
+                await ProjectRepository.UpdateAsync(Project);
+
+                Snackbar.Add($"Found {_result.Folders.Count} folder(s) with {_result.Folders.Sum(f => f.MessageCount):N0} messages.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"Explore failed: {_result.ErrorMessage}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isExploring = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Close() => MudDialog.Close();
+}

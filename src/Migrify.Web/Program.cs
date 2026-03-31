@@ -10,6 +10,12 @@ var builder = WebApplication.CreateBuilder(args);
 // Load local overrides (gitignored, for dev credentials)
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
+// File logging to logs/ folder
+var logsDir = Path.Combine(AppContext.BaseDirectory, "logs");
+Directory.CreateDirectory(logsDir);
+builder.Logging.AddSimpleConsole();
+builder.Logging.AddFile(Path.Combine(logsDir, "migrify-{Date}.log"));
+
 // Infrastructure services (DbContext, repositories, encryption, connection testers)
 builder.Services.AddInfrastructure(builder.Configuration);
 

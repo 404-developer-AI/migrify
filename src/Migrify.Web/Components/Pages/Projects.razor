@@ -33,7 +33,7 @@ else
             <MudTh>IMAP Source</MudTh>
             <MudTh>M365 Destination</MudTh>
             <MudTh>Created</MudTh>
-            <MudTh Style="width: 120px;">Actions</MudTh>
+            <MudTh Style="width: 160px;">Actions</MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Name">
@@ -72,6 +72,14 @@ else
                 <MudText Typo="Typo.body2">@context.CreatedAt.ToString("dd-MM-yyyy HH:mm")</MudText>
             </MudTd>
             <MudTd>
+                @if (context.ImapSettings is not null && !string.IsNullOrEmpty(context.ImapSettings.Host))
+                {
+                    <MudTooltip Text="Explore Mailbox">
+                        <MudIconButton Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small"
+                                       Color="Color.Primary"
+                                       OnClick="@(() => OpenExploreDialog(context))" />
+                    </MudTooltip>
+                }
                 <MudTooltip Text="Edit">
                     <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
                                    OnClick="@(() => OpenEditDialog(context))" />
@@ -123,6 +131,17 @@ else
 
         if (result is not null && !result.Canceled)
             await LoadProjects();
+    }
+
+    private async Task OpenExploreDialog(Project project)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(ImapExploreDialog.Project), project }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        await DialogService.ShowAsync<ImapExploreDialog>("Explore Mailbox", parameters, options);
     }
 
     private async Task OpenDeleteDialog(Project project)
