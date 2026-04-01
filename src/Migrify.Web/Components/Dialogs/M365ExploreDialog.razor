@@ -1,0 +1,140 @@
+@inject IM365MailboxExplorer M365Explorer
+@inject ICredentialEncryptor CredentialEncryptor
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Explore M365 Mailbox — @Job.DestinationEmail</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_result is not null && _result.Success)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-2">
+                @_result.Folders.Count folder(s) — @_result.Folders.Sum(f => f.TotalItemCount).ToString("N0") total items
+            </MudText>
+
+            <MudTable Items="_result.Folders" Hover="true" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Folder</MudTh>
+                    <MudTh Style="text-align: right;">Items</MudTh>
+                    <MudTh Style="text-align: right;">Unread</MudTh>
+                    <MudTh>Last Message</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Folder">
+                        <MudText Typo="Typo.body2">@context.DisplayName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Items" Style="text-align: right;">
+                        <MudText Typo="Typo.body2">@context.TotalItemCount.ToString("N0")</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Unread" Style="text-align: right;">
+                        <MudText Typo="Typo.body2">@context.UnreadItemCount.ToString("N0")</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Last Message">
+                        <MudText Typo="Typo.body2">@(context.LastMessageDate?.ToString("dd-MM-yyyy") ?? "—")</MudText>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+        else if (_result is not null && !_result.Success)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">
+                @_result.ErrorMessage
+            </MudAlert>
+        }
+        else if (_isExploring)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-3" />
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Connecting to Microsoft 365 and exploring folders for @Job.DestinationEmail...
+            </MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Click "Explore" to connect to Microsoft 365 and retrieve folder information.
+            </MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.CloudQueue"
+                   OnClick="Explore" Disabled="_isExploring">
+            @if (_isExploring)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                <span>Exploring...</span>
+            }
+            else
+            {
+                <span>Explore</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public MigrationJob Job { get; set; } = null!;
+
+    private M365ExploreResult? _result;
+    private bool _isExploring;
+
+    private async Task Explore()
+    {
+        var m365 = Job.M365Settings;
+        if (m365 is null || string.IsNullOrWhiteSpace(m365.TenantId) || string.IsNullOrWhiteSpace(m365.ClientId))
+        {
+            Snackbar.Add("M365 settings are not configured for this job.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(m365.EncryptedClientSecret))
+        {
+            Snackbar.Add("No M365 client secret configured. Edit the job to set one.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(Job.DestinationEmail))
+        {
+            Snackbar.Add("No destination email configured for this job.", Severity.Warning);
+            return;
+        }
+
+        _isExploring = true;
+        _result = null;
+        StateHasChanged();
+
+        try
+        {
+            var clientSecret = CredentialEncryptor.Decrypt(m365.EncryptedClientSecret);
+
+            _result = await M365Explorer.ExploreAsync(
+                m365.TenantId, m365.ClientId, clientSecret, Job.DestinationEmail);
+
+            if (_result.Success)
+            {
+                Snackbar.Add($"Found {_result.Folders.Count} folder(s) with {_result.Folders.Sum(f => f.TotalItemCount):N0} items.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"Explore failed: {_result.ErrorMessage}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isExploring = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Close() => MudDialog.Close();
+}

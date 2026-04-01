@@ -67,9 +67,10 @@ else
                 <MudTh>Source Email</MudTh>
                 <MudTh>Destination Email</MudTh>
                 <MudTh>IMAP</MudTh>
+                <MudTh>M365</MudTh>
                 <MudTh>Status</MudTh>
                 <MudTh>Created</MudTh>
-                <MudTh Style="width: 140px;">Actions</MudTh>
+                <MudTh Style="width: 180px;">Actions</MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="Source Email">
@@ -90,6 +91,16 @@ else
                         <MudText Typo="Typo.body2" Color="Color.Secondary">Not configured</MudText>
                     }
                 </MudTd>
+                <MudTd DataLabel="M365">
+                    @if (context.M365Settings is not null && !string.IsNullOrEmpty(context.M365Settings.TenantId))
+                    {
+                        <MudText Typo="Typo.body2">@context.M365Settings.TenantId[..Math.Min(8, context.M365Settings.TenantId.Length)]...</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Not configured</MudText>
+                    }
+                </MudTd>
                 <MudTd DataLabel="Status">
                     <MudChip T="string" Size="Size.Small" Color="@GetJobStatusColor(context.Status)">
                         @context.Status
@@ -101,10 +112,18 @@ else
                 <MudTd>
                     @if (context.ImapSettings is not null && !string.IsNullOrEmpty(context.ImapSettings.Host))
                     {
-                        <MudTooltip Text="Explore Mailbox">
+                        <MudTooltip Text="Explore IMAP Mailbox">
                             <MudIconButton Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small"
                                            Color="Color.Primary"
                                            OnClick="@(() => OpenExploreDialog(context))" />
+                        </MudTooltip>
+                    }
+                    @if (context.M365Settings is not null && !string.IsNullOrEmpty(context.M365Settings.TenantId))
+                    {
+                        <MudTooltip Text="Explore M365 Mailbox">
+                            <MudIconButton Icon="@Icons.Material.Filled.CloudQueue" Size="Size.Small"
+                                           Color="Color.Primary"
+                                           OnClick="@(() => OpenM365ExploreDialog(context))" />
                         </MudTooltip>
                     }
                     <MudTooltip Text="Edit">
@@ -180,6 +199,17 @@ else
 
         var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
         await DialogService.ShowAsync<ImapExploreDialog>("Explore Mailbox", parameters, options);
+    }
+
+    private async Task OpenM365ExploreDialog(MigrationJob job)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(M365ExploreDialog.Job), job }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        await DialogService.ShowAsync<M365ExploreDialog>("Explore M365 Mailbox", parameters, options);
     }
 
     private async Task OpenAddJobDialog()

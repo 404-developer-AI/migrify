@@ -43,6 +43,32 @@
                         You need a Google Cloud project with OAuth2 credentials.
                     </MudAlert>
 
+                    <MudExpansionPanels Elevation="0" Class="mb-3">
+                        <MudExpansionPanel Text="How to set up Google OAuth2" MaxHeight="500">
+                            <MudText Typo="Typo.body2" Class="mb-2">
+                                <strong>1.</strong> Go to <strong>Google Cloud Console</strong> → <strong>APIs & Services</strong> → <strong>Library</strong> → Enable <strong>Gmail API</strong>
+                            </MudText>
+                            <MudText Typo="Typo.body2" Class="mb-2">
+                                <strong>2.</strong> Go to <strong>OAuth consent screen</strong> → Choose <em>External</em> (or <em>Internal</em> for Workspace)
+                            </MudText>
+                            <MudText Typo="Typo.body2" Class="mb-2">
+                                <strong>3.</strong> Add scope: <code>https://mail.google.com/</code>
+                            </MudText>
+                            <MudText Typo="Typo.body2" Class="mb-2">
+                                <strong>4.</strong> Go to <strong>Credentials</strong> → <strong>Create Credentials</strong> → <strong>OAuth client ID</strong> → <em>Web application</em>
+                            </MudText>
+                            <MudText Typo="Typo.body2" Class="mb-2">
+                                <strong>5.</strong> Set redirect URI: <code>https://&lt;your-host&gt;/oauth/callback/google</code>
+                            </MudText>
+                            <MudText Typo="Typo.body2" Class="mb-2">
+                                <strong>6.</strong> Copy <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields below
+                            </MudText>
+                            <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                                For full setup details, see <code>docs/google-oauth2-setup.md</code> in the Migrify repository.
+                            </MudAlert>
+                        </MudExpansionPanel>
+                    </MudExpansionPanels>
+
                     <MudText Typo="Typo.caption" Class="mb-2">Supported OAuth2 Providers</MudText>
                     <MudChipSet T="string" ReadOnly="true" Class="mb-3">
                         <MudChip T="string" Color="Color.Primary" Variant="Variant.Filled">Google / Gmail</MudChip>
@@ -138,7 +164,8 @@
 
             <MudTabPanel Text="M365 Destination" Icon="@Icons.Material.Filled.Cloud">
                 <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
-                    This validates credentials only, not specific API permissions (e.g. Mail.ReadWrite).
+                    Tests credentials and Mail.ReadWrite permission on the destination mailbox.
+                    A destination email is required for the full permission check.
                 </MudAlert>
                 <MudTextField @bind-Value="_m365TenantId" Label="Tenant ID" Class="mb-3" />
                 <MudTextField @bind-Value="_m365ClientId" Label="Client ID" Class="mb-3" />
@@ -148,7 +175,8 @@
                               Class="mb-3" />
                 <MudButton Variant="Variant.Outlined" Color="Color.Primary"
                            StartIcon="@Icons.Material.Filled.Cable"
-                           OnClick="TestM365Connection" Disabled="_isTestingM365">
+                           OnClick="TestM365Connection" Disabled="_isTestingM365"
+                           Class="mb-3">
                     @if (_isTestingM365)
                     {
                         <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
@@ -159,6 +187,35 @@
                         <span>Test Connection</span>
                     }
                 </MudButton>
+
+                <MudExpansionPanels Elevation="0" Class="mt-2">
+                    <MudExpansionPanel Text="How to set up Azure AD App Registration" MaxHeight="500">
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            <strong>1.</strong> Go to <strong>Microsoft Entra ID</strong> (portal.azure.com) → <strong>App registrations</strong> → <strong>New registration</strong>
+                        </MudText>
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            <strong>2.</strong> Name: <em>Migrify</em>, Supported account types: <em>Single tenant</em>
+                        </MudText>
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            <strong>3.</strong> Go to <strong>API permissions</strong> → <strong>Add a permission</strong> → <strong>Microsoft Graph</strong> → <strong>Application permissions</strong>
+                        </MudText>
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            <strong>4.</strong> Add: <code>Mail.ReadWrite</code> and <code>User.Read.All</code>
+                        </MudText>
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            <strong>5.</strong> Click <strong>Grant admin consent</strong> for your organization
+                        </MudText>
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            <strong>6.</strong> Go to <strong>Certificates & secrets</strong> → <strong>New client secret</strong> → copy the secret value
+                        </MudText>
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            <strong>7.</strong> Copy <strong>Tenant ID</strong>, <strong>Application (client) ID</strong>, and the <strong>Client Secret</strong> into the fields above
+                        </MudText>
+                        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                            For full setup details, see <code>docs/azure-app-registration.md</code> in the Migrify repository.
+                        </MudAlert>
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
             </MudTabPanel>
         </MudTabs>
     </DialogContent>
@@ -484,12 +541,28 @@
                 return;
             }
 
-            var result = await M365Tester.TestAsync(_m365TenantId!, _m365ClientId!, secret);
+            ConnectionTestResult result;
+
+            if (!string.IsNullOrWhiteSpace(_destinationEmail))
+            {
+                result = await M365Tester.TestAsync(_m365TenantId!, _m365ClientId!, secret, _destinationEmail);
+            }
+            else
+            {
+                result = await M365Tester.TestAsync(_m365TenantId!, _m365ClientId!, secret);
+            }
 
             if (result.Success)
-                Snackbar.Add("M365 connection successful!", Severity.Success);
+            {
+                var message = !string.IsNullOrWhiteSpace(_destinationEmail)
+                    ? "M365 connection and permissions verified!"
+                    : "M365 credentials valid. Set a destination email for a full permission check.";
+                Snackbar.Add(message, Severity.Success);
+            }
             else
+            {
                 Snackbar.Add($"M365 connection failed: {result.ErrorMessage}", Severity.Error);
+            }
         }
         catch (Exception ex)
         {
