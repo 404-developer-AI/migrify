@@ -1,0 +1,191 @@
+@inject IProjectRepository ProjectRepository
+@inject ICredentialEncryptor CredentialEncryptor
+@inject IM365ConnectionTester M365Tester
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Configure M365 Destination</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+            Configure the Microsoft 365 app registration credentials for this project.
+            All jobs in this project will use these credentials to access destination mailboxes.
+        </MudAlert>
+        <MudTextField @bind-Value="_tenantId" Label="Tenant ID"
+                      Placeholder="00000000-0000-0000-0000-000000000000" Class="mb-3" />
+        <MudTextField @bind-Value="_clientId" Label="Client ID"
+                      Placeholder="(client application ID)" Class="mb-3" />
+        <MudTextField @bind-Value="_clientSecret" Label="Client Secret"
+                      InputType="InputType.Password"
+                      Placeholder="@(_hasExistingSecret ? "Leave empty to keep current secret" : "")"
+                      Class="mb-3" />
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Cable"
+                   OnClick="TestConnection" Disabled="_isTesting"
+                   Class="mb-3">
+            @if (_isTesting)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                <span>Testing...</span>
+            }
+            else
+            {
+                <span>Test Connection</span>
+            }
+        </MudButton>
+
+        <MudExpansionPanels Elevation="0" Class="mt-2">
+            <MudExpansionPanel Text="How to set up Azure AD App Registration" MaxHeight="500">
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    <strong>1.</strong> Go to <strong>Microsoft Entra ID</strong> (portal.azure.com) → <strong>App registrations</strong> → <strong>New registration</strong>
+                </MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    <strong>2.</strong> Name: <em>Migrify</em>, Supported account types: <em>Single tenant</em>
+                </MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    <strong>3.</strong> Go to <strong>API permissions</strong> → <strong>Add a permission</strong> → <strong>Microsoft Graph</strong> → <strong>Application permissions</strong>
+                </MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    <strong>4.</strong> Add: <code>Mail.ReadWrite</code> and <code>User.Read.All</code>
+                </MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    <strong>5.</strong> Click <strong>Grant admin consent</strong> for your organization
+                </MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    <strong>6.</strong> Go to <strong>Certificates & secrets</strong> → <strong>New client secret</strong> → copy the secret value
+                </MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">
+                    <strong>7.</strong> Copy <strong>Tenant ID</strong>, <strong>Application (client) ID</strong>, and the <strong>Client Secret</strong> into the fields above
+                </MudText>
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                    For full setup details, see <code>docs/azure-app-registration.md</code> in the Migrify repository.
+                </MudAlert>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public Project Project { get; set; } = null!;
+
+    private string? _tenantId;
+    private string? _clientId;
+    private string? _clientSecret;
+    private bool _hasExistingSecret;
+    private bool _isTesting;
+    private bool _isSaving;
+
+    protected override void OnParametersSet()
+    {
+        if (Project.M365Settings is not null)
+        {
+            _tenantId = Project.M365Settings.TenantId;
+            _clientId = Project.M365Settings.ClientId;
+            _hasExistingSecret = !string.IsNullOrEmpty(Project.M365Settings.EncryptedClientSecret);
+        }
+    }
+
+    private async Task TestConnection()
+    {
+        if (string.IsNullOrWhiteSpace(_tenantId) || string.IsNullOrWhiteSpace(_clientId))
+        {
+            Snackbar.Add("Please enter Tenant ID and Client ID first.", Severity.Warning);
+            return;
+        }
+
+        _isTesting = true;
+        StateHasChanged();
+
+        try
+        {
+            var secret = _clientSecret;
+            if (string.IsNullOrEmpty(secret) && _hasExistingSecret && Project.M365Settings?.EncryptedClientSecret is not null)
+            {
+                secret = CredentialEncryptor.Decrypt(Project.M365Settings.EncryptedClientSecret);
+            }
+
+            if (string.IsNullOrEmpty(secret))
+            {
+                Snackbar.Add("Please enter a Client Secret.", Severity.Warning);
+                return;
+            }
+
+            var result = await M365Tester.TestAsync(_tenantId!, _clientId!, secret);
+
+            if (result.Success)
+                Snackbar.Add("M365 credentials verified!", Severity.Success);
+            else
+                Snackbar.Add($"M365 connection failed: {result.ErrorMessage}", Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error testing connection: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isTesting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(_tenantId) || string.IsNullOrWhiteSpace(_clientId))
+        {
+            Snackbar.Add("Tenant ID and Client ID are required.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_clientSecret) && !_hasExistingSecret)
+        {
+            Snackbar.Add("Please enter a Client Secret.", Severity.Warning);
+            return;
+        }
+
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            Project.M365Settings ??= new M365Settings();
+            Project.M365Settings.TenantId = _tenantId;
+            Project.M365Settings.ClientId = _clientId;
+
+            if (!string.IsNullOrEmpty(_clientSecret))
+                Project.M365Settings.EncryptedClientSecret = CredentialEncryptor.Encrypt(_clientSecret);
+
+            if (Project.M365Settings.Id == Guid.Empty)
+                Project.M365Settings.Id = Guid.NewGuid();
+
+            await ProjectRepository.UpdateAsync(Project);
+            Snackbar.Add("M365 destination connector saved.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

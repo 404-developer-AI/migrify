@@ -22,6 +22,9 @@ public static class DependencyInjection
         services.AddTransient<IImapMailboxExplorer, ImapMailboxExplorer>();
         services.AddTransient<IM365ConnectionTester, M365ConnectionTester>();
         services.AddTransient<IM365MailboxExplorer, M365MailboxExplorer>();
+        services.AddTransient<IM365MailboxDiscovery, M365MailboxDiscovery>();
+        services.AddTransient<IGoogleWorkspaceMailboxDiscovery, GoogleWorkspaceMailboxDiscovery>();
+        services.AddScoped<IDiscoveredMailboxRepository, DiscoveredMailboxRepository>();
 
         services.AddHttpClient("ImapAutoDiscovery", client =>
         {

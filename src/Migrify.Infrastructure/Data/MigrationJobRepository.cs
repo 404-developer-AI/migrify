@@ -17,7 +17,6 @@ public class MigrationJobRepository : IMigrationJobRepository
     {
         return await _db.MigrationJobs
             .Include(j => j.ImapSettings)
-            .Include(j => j.M365Settings)
             .Where(j => j.ProjectId == projectId)
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
@@ -27,7 +26,6 @@ public class MigrationJobRepository : IMigrationJobRepository
     {
         return await _db.MigrationJobs
             .Include(j => j.ImapSettings)
-            .Include(j => j.M365Settings)
             .FirstOrDefaultAsync(j => j.Id == id);
     }
 
@@ -39,9 +37,6 @@ public class MigrationJobRepository : IMigrationJobRepository
 
         if (job.ImapSettings is not null)
             job.ImapSettings.Id = Guid.NewGuid();
-
-        if (job.M365Settings is not null)
-            job.M365Settings.Id = Guid.NewGuid();
 
         _db.MigrationJobs.Add(job);
         await _db.SaveChangesAsync();

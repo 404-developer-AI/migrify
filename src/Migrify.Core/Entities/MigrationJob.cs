@@ -11,7 +11,8 @@ public class MigrationJob
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
+    public bool HasImapOverride { get; set; }
+
     public Project Project { get; set; } = null!;
     public ImapSettings? ImapSettings { get; set; }
-    public M365Settings? M365Settings { get; set; }
 }

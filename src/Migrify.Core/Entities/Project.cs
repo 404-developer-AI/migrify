@@ -6,8 +6,12 @@ public class Project
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public ProjectStatus Status { get; set; } = ProjectStatus.New;
+    public SourceConnectorType SourceConnectorType { get; set; } = SourceConnectorType.ManualImap;
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
     public ICollection<MigrationJob> MigrationJobs { get; set; } = new List<MigrationJob>();
+    public M365Settings? M365Settings { get; set; }
+    public GoogleWorkspaceSettings? GoogleWorkspaceSettings { get; set; }
+    public ICollection<DiscoveredMailbox> DiscoveredMailboxes { get; set; } = new List<DiscoveredMailbox>();
 }

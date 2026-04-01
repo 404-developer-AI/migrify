@@ -4,7 +4,7 @@
 
 <MudDialog>
     <TitleContent>
-        <MudText Typo="Typo.h6">Explore M365 Mailbox — @Job.DestinationEmail</MudText>
+        <MudText Typo="Typo.h6">Explore M365 Mailbox — @DestinationEmail</MudText>
     </TitleContent>
     <DialogContent>
         @if (_result is not null && _result.Success)
@@ -46,7 +46,7 @@
         {
             <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-3" />
             <MudText Typo="Typo.body2" Color="Color.Secondary">
-                Connecting to Microsoft 365 and exploring folders for @Job.DestinationEmail...
+                Connecting to Microsoft 365 and exploring folders for @DestinationEmail...
             </MudText>
         }
         else
@@ -79,29 +79,31 @@
     private IMudDialogInstance MudDialog { get; set; } = null!;
 
     [Parameter]
-    public MigrationJob Job { get; set; } = null!;
+    public M365Settings? M365Settings { get; set; }
+
+    [Parameter]
+    public string DestinationEmail { get; set; } = string.Empty;
 
     private M365ExploreResult? _result;
     private bool _isExploring;
 
     private async Task Explore()
     {
-        var m365 = Job.M365Settings;
-        if (m365 is null || string.IsNullOrWhiteSpace(m365.TenantId) || string.IsNullOrWhiteSpace(m365.ClientId))
+        if (M365Settings is null || string.IsNullOrWhiteSpace(M365Settings.TenantId) || string.IsNullOrWhiteSpace(M365Settings.ClientId))
         {
-            Snackbar.Add("M365 settings are not configured for this job.", Severity.Warning);
+            Snackbar.Add("M365 settings are not configured for this project.", Severity.Warning);
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(m365.EncryptedClientSecret))
+        if (string.IsNullOrWhiteSpace(M365Settings.EncryptedClientSecret))
         {
-            Snackbar.Add("No M365 client secret configured. Edit the job to set one.", Severity.Warning);
+            Snackbar.Add("No M365 client secret configured. Configure the destination connector first.", Severity.Warning);
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(Job.DestinationEmail))
+        if (string.IsNullOrWhiteSpace(DestinationEmail))
         {
-            Snackbar.Add("No destination email configured for this job.", Severity.Warning);
+            Snackbar.Add("No destination email specified.", Severity.Warning);
             return;
         }
 
@@ -111,10 +113,10 @@
 
         try
         {
-            var clientSecret = CredentialEncryptor.Decrypt(m365.EncryptedClientSecret);
+            var clientSecret = CredentialEncryptor.Decrypt(M365Settings.EncryptedClientSecret);
 
             _result = await M365Explorer.ExploreAsync(
-                m365.TenantId, m365.ClientId, clientSecret, Job.DestinationEmail);
+                M365Settings.TenantId, M365Settings.ClientId, clientSecret, DestinationEmail);
 
             if (_result.Success)
             {

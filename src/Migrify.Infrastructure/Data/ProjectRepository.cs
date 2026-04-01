@@ -25,6 +25,18 @@ public class ProjectRepository : IProjectRepository
     {
         return await _db.Projects
             .Include(p => p.MigrationJobs)
+            .Include(p => p.M365Settings)
+            .FirstOrDefaultAsync(p => p.Id == id);
+    }
+
+    public async Task<Project?> GetByIdWithConnectorsAsync(Guid id)
+    {
+        return await _db.Projects
+            .Include(p => p.MigrationJobs)
+                .ThenInclude(j => j.ImapSettings)
+            .Include(p => p.M365Settings)
+            .Include(p => p.GoogleWorkspaceSettings)
+            .Include(p => p.DiscoveredMailboxes)
             .FirstOrDefaultAsync(p => p.Id == id);
     }
 

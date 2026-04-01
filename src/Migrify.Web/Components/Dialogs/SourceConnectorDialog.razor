@@ -1,0 +1,304 @@
+@using System.Text.Json
+@inject IProjectRepository ProjectRepository
+@inject ICredentialEncryptor CredentialEncryptor
+@inject IGoogleWorkspaceMailboxDiscovery GoogleDiscovery
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Configure Source Connector</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudSelect @bind-Value="_connectorType" Label="Source Connector Type" Class="mb-3">
+            <MudSelectItem Value="SourceConnectorType.ManualImap">Manual IMAP</MudSelectItem>
+            <MudSelectItem Value="SourceConnectorType.GoogleWorkspace">Google Workspace</MudSelectItem>
+        </MudSelect>
+
+        @if (_connectorType == SourceConnectorType.ManualImap)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+                Each migration job will manage its own IMAP credentials (password or OAuth2).
+                Use this when migrating from individual mailboxes or mixed providers.
+            </MudAlert>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+                Google Workspace uses a service account with domain-wide delegation to access all
+                mailboxes in the domain. No per-user credentials needed.
+            </MudAlert>
+
+            <MudExpansionPanels Elevation="0" Class="mb-3">
+                <MudExpansionPanel Text="How to set up Google Workspace domain-wide delegation" MaxHeight="600">
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <strong>1.</strong> Go to <strong>Google Cloud Console</strong> → <strong>IAM & Admin</strong> → <strong>Service Accounts</strong> → <strong>Create Service Account</strong>
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <strong>2.</strong> Give it a name (e.g. <em>migrify-migration</em>) and click <strong>Done</strong>
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <strong>3.</strong> Click on the service account → <strong>Keys</strong> → <strong>Add Key</strong> → <strong>Create new key</strong> → <strong>JSON</strong> → Download
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <strong>4.</strong> Copy the service account email (e.g. <code>migrify-migration@@your-project.iam.gserviceaccount.com</code>)
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <strong>5.</strong> Go to <strong>Google Admin Console</strong> (admin.google.com) → <strong>Security</strong> → <strong>API controls</strong> → <strong>Domain-wide delegation</strong> → <strong>Add new</strong>
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <strong>6.</strong> Enter the service account's <strong>Client ID</strong> (from the JSON key file) and scope: <code>https://www.googleapis.com/auth/admin.directory.user.readonly</code>
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mb-2">
+                        <strong>7.</strong> Upload the JSON key file below and enter the admin email for impersonation
+                    </MudText>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+
+            <MudFileUpload T="IBrowserFile" Accept=".json" MaximumFileCount="1"
+                           FilesChanged="OnServiceAccountKeyUploaded">
+                <ActivatorContent>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.UploadFile">
+                        @(_hasServiceAccountKey ? "Replace Service Account Key" : "Upload Service Account Key (.json)")
+                    </MudButton>
+                </ActivatorContent>
+            </MudFileUpload>
+
+            @if (_hasServiceAccountKey)
+            {
+                <MudChip T="string" Color="Color.Success" Variant="Variant.Filled" Size="Size.Small" Class="mt-2 mb-3">
+                    Service account key loaded: @_serviceAccountEmail
+                </MudChip>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1 mb-3">
+                    Only the required fields (client_email, private_key, token_uri) are extracted. The raw file is not stored.
+                </MudText>
+            }
+
+            <MudTextField @bind-Value="_impersonationEmail" Label="Admin Email (for impersonation)"
+                          HelperText="A Google Workspace admin email to impersonate for API access"
+                          Placeholder="admin@yourdomain.com" Class="mb-3" />
+            <MudTextField @bind-Value="_domain" Label="Domain"
+                          HelperText="The Google Workspace domain to discover mailboxes from"
+                          Placeholder="yourdomain.com" Class="mb-3" />
+
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Cable"
+                       OnClick="TestConnection" Disabled="_isTesting || !_hasServiceAccountKey"
+                       Class="mb-3">
+                @if (_isTesting)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    <span>Testing...</span>
+                }
+                else
+                {
+                    <span>Test Connection</span>
+                }
+            </MudButton>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public Project Project { get; set; } = null!;
+
+    private SourceConnectorType _connectorType = SourceConnectorType.ManualImap;
+    private string _serviceAccountEmail = string.Empty;
+    private string? _privateKey;
+    private string _tokenUri = "https://oauth2.googleapis.com/token";
+    private string _impersonationEmail = string.Empty;
+    private string _domain = string.Empty;
+    private bool _hasServiceAccountKey;
+    private bool _hasExistingKey;
+    private bool _isTesting;
+    private bool _isSaving;
+
+    protected override void OnParametersSet()
+    {
+        _connectorType = Project.SourceConnectorType;
+
+        if (Project.GoogleWorkspaceSettings is not null)
+        {
+            var gws = Project.GoogleWorkspaceSettings;
+            _serviceAccountEmail = gws.ServiceAccountEmail;
+            _tokenUri = gws.TokenUri;
+            _impersonationEmail = gws.ImpersonationEmail;
+            _domain = gws.Domain;
+            _hasExistingKey = !string.IsNullOrEmpty(gws.EncryptedPrivateKey);
+            _hasServiceAccountKey = _hasExistingKey;
+        }
+    }
+
+    private async Task OnServiceAccountKeyUploaded(IBrowserFile file)
+    {
+        try
+        {
+            if (file.Size > 10 * 1024)
+            {
+                Snackbar.Add("File too large. Maximum size is 10 KB.", Severity.Warning);
+                return;
+            }
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024);
+            using var reader = new StreamReader(stream);
+            var jsonContent = await reader.ReadToEndAsync();
+
+            // Parse and extract only the required fields
+            JsonDocument? doc = null;
+            try
+            {
+                doc = JsonDocument.Parse(jsonContent);
+            }
+            catch (JsonException)
+            {
+                Snackbar.Add("Invalid JSON file.", Severity.Error);
+                return;
+            }
+
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("client_email", out var emailProp) ||
+                !root.TryGetProperty("private_key", out var keyProp))
+            {
+                doc.Dispose();
+                Snackbar.Add("Invalid service account key: missing required fields (client_email, private_key).", Severity.Error);
+                return;
+            }
+
+            _serviceAccountEmail = emailProp.GetString() ?? string.Empty;
+            _privateKey = keyProp.GetString();
+            _tokenUri = root.TryGetProperty("token_uri", out var uriProp)
+                ? uriProp.GetString() ?? "https://oauth2.googleapis.com/token"
+                : "https://oauth2.googleapis.com/token";
+
+            doc.Dispose();
+
+            // Clear the raw JSON from memory
+            jsonContent = null;
+
+            _hasServiceAccountKey = true;
+            Snackbar.Add($"Service account key loaded: {_serviceAccountEmail}", Severity.Success);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error reading file: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task TestConnection()
+    {
+        if (string.IsNullOrWhiteSpace(_impersonationEmail) || string.IsNullOrWhiteSpace(_domain))
+        {
+            Snackbar.Add("Please enter admin email and domain first.", Severity.Warning);
+            return;
+        }
+
+        _isTesting = true;
+        StateHasChanged();
+
+        try
+        {
+            var privateKey = _privateKey;
+            if (string.IsNullOrEmpty(privateKey) && _hasExistingKey && Project.GoogleWorkspaceSettings?.EncryptedPrivateKey is not null)
+            {
+                privateKey = CredentialEncryptor.Decrypt(Project.GoogleWorkspaceSettings.EncryptedPrivateKey);
+            }
+
+            if (string.IsNullOrEmpty(privateKey))
+            {
+                Snackbar.Add("No private key available. Please upload a service account key file.", Severity.Warning);
+                return;
+            }
+
+            var result = await GoogleDiscovery.TestConnectionAsync(
+                _serviceAccountEmail, privateKey, _tokenUri, _impersonationEmail, _domain);
+
+            if (result.Success)
+                Snackbar.Add("Google Workspace connection successful!", Severity.Success);
+            else
+                Snackbar.Add($"Connection failed: {result.ErrorMessage}", Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error testing connection: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isTesting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task Save()
+    {
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            Project.SourceConnectorType = _connectorType;
+
+            if (_connectorType == SourceConnectorType.GoogleWorkspace)
+            {
+                if (string.IsNullOrWhiteSpace(_impersonationEmail) || string.IsNullOrWhiteSpace(_domain))
+                {
+                    Snackbar.Add("Admin email and domain are required for Google Workspace.", Severity.Warning);
+                    _isSaving = false;
+                    return;
+                }
+
+                if (!_hasServiceAccountKey)
+                {
+                    Snackbar.Add("Please upload a service account key file.", Severity.Warning);
+                    _isSaving = false;
+                    return;
+                }
+
+                Project.GoogleWorkspaceSettings ??= new GoogleWorkspaceSettings();
+                Project.GoogleWorkspaceSettings.ServiceAccountEmail = _serviceAccountEmail;
+                Project.GoogleWorkspaceSettings.TokenUri = _tokenUri;
+                Project.GoogleWorkspaceSettings.ImpersonationEmail = _impersonationEmail;
+                Project.GoogleWorkspaceSettings.Domain = _domain;
+
+                if (!string.IsNullOrEmpty(_privateKey))
+                    Project.GoogleWorkspaceSettings.EncryptedPrivateKey = CredentialEncryptor.Encrypt(_privateKey);
+
+                if (Project.GoogleWorkspaceSettings.Id == Guid.Empty)
+                    Project.GoogleWorkspaceSettings.Id = Guid.NewGuid();
+            }
+
+            await ProjectRepository.UpdateAsync(Project);
+            Snackbar.Add("Source connector saved.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

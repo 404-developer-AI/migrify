@@ -16,6 +16,8 @@ public class ApplicationDbContext : IdentityDbContext
     public DbSet<M365Settings> M365Settings => Set<M365Settings>();
     public DbSet<MigrationJob> MigrationJobs => Set<MigrationJob>();
     public DbSet<ImapProviderPreset> ImapProviderPresets => Set<ImapProviderPreset>();
+    public DbSet<GoogleWorkspaceSettings> GoogleWorkspaceSettings => Set<GoogleWorkspaceSettings>();
+    public DbSet<DiscoveredMailbox> DiscoveredMailboxes => Set<DiscoveredMailbox>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -27,6 +29,7 @@ public class ApplicationDbContext : IdentityDbContext
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Description).HasMaxLength(1000);
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.SourceConnectorType).HasConversion<string>().HasMaxLength(30);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");
         });
@@ -74,14 +77,44 @@ public class ApplicationDbContext : IdentityDbContext
         builder.Entity<M365Settings>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.HasIndex(e => e.MigrationJobId).IsUnique();
+            entity.HasIndex(e => e.ProjectId).IsUnique();
             entity.Property(e => e.TenantId).HasMaxLength(100);
             entity.Property(e => e.ClientId).HasMaxLength(100);
             entity.Property(e => e.EncryptedClientSecret).HasMaxLength(500);
 
-            entity.HasOne(e => e.MigrationJob)
-                .WithOne(j => j.M365Settings)
-                .HasForeignKey<M365Settings>(e => e.MigrationJobId)
+            entity.HasOne(e => e.Project)
+                .WithOne(p => p.M365Settings)
+                .HasForeignKey<M365Settings>(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<GoogleWorkspaceSettings>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.ProjectId).IsUnique();
+            entity.Property(e => e.ServiceAccountEmail).HasMaxLength(255);
+            entity.Property(e => e.EncryptedPrivateKey).HasMaxLength(5000);
+            entity.Property(e => e.TokenUri).HasMaxLength(500);
+            entity.Property(e => e.ImpersonationEmail).HasMaxLength(255);
+            entity.Property(e => e.Domain).HasMaxLength(255);
+
+            entity.HasOne(e => e.Project)
+                .WithOne(p => p.GoogleWorkspaceSettings)
+                .HasForeignKey<GoogleWorkspaceSettings>(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<DiscoveredMailbox>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.ProjectId, e.Side });
+            entity.Property(e => e.Email).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.DisplayName).HasMaxLength(255);
+            entity.Property(e => e.Side).HasConversion<string>().HasMaxLength(20);
+
+            entity.HasOne(e => e.Project)
+                .WithMany(p => p.DiscoveredMailboxes)
+                .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

@@ -2,6 +2,10 @@
 @attribute [Authorize]
 @inject IProjectRepository ProjectRepository
 @inject IMigrationJobRepository JobRepository
+@inject IDiscoveredMailboxRepository DiscoveredMailboxRepository
+@inject ICredentialEncryptor CredentialEncryptor
+@inject IM365MailboxDiscovery M365Discovery
+@inject IGoogleWorkspaceMailboxDiscovery GoogleDiscovery
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
@@ -44,6 +48,122 @@ else
         </MudCardContent>
     </MudCard>
 
+    @* Connectors *@
+    <MudText Typo="Typo.h6" Class="section-title mb-3">Connectors</MudText>
+    <MudGrid Class="mb-4">
+        @* Source Connector *@
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="0" Style="height: 100%;">
+                <MudCardContent>
+                    <div class="d-flex justify-space-between align-center mb-2">
+                        <MudText Typo="Typo.subtitle1"><strong>Source</strong></MudText>
+                        <MudChip T="string" Size="Size.Small" Color="@(_project.SourceConnectorType == SourceConnectorType.GoogleWorkspace ? Color.Primary : Color.Default)">
+                            @(_project.SourceConnectorType == SourceConnectorType.GoogleWorkspace ? "Google Workspace" : "Manual IMAP")
+                        </MudChip>
+                    </div>
+                    @if (_project.SourceConnectorType == SourceConnectorType.ManualImap)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            Each job manages its own IMAP credentials.
+                        </MudText>
+                    }
+                    else if (_project.GoogleWorkspaceSettings is not null)
+                    {
+                        <MudText Typo="Typo.body2">Domain: <strong>@_project.GoogleWorkspaceSettings.Domain</strong></MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@_project.GoogleWorkspaceSettings.ServiceAccountEmail</MudText>
+                        @if (_sourceMailboxCount > 0)
+                        {
+                            <MudText Typo="Typo.body2" Class="mt-1">
+                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Color="Color.Success" />
+                                @_sourceMailboxCount mailbox(es) discovered
+                            </MudText>
+                        }
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Warning">Not configured yet.</MudText>
+                    }
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Settings"
+                               OnClick="OpenSourceConnectorDialog">
+                        Configure
+                    </MudButton>
+                    @if (_project.SourceConnectorType == SourceConnectorType.GoogleWorkspace && _project.GoogleWorkspaceSettings is not null)
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Search"
+                                   OnClick="DiscoverSourceMailboxes" Disabled="_isDiscoveringSource">
+                            @if (_isDiscoveringSource)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                                <span>Discovering...</span>
+                            }
+                            else
+                            {
+                                <span>Discover Mailboxes</span>
+                            }
+                        </MudButton>
+                    }
+                </MudCardActions>
+            </MudCard>
+        </MudItem>
+
+        @* Destination Connector *@
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="0" Style="height: 100%;">
+                <MudCardContent>
+                    <div class="d-flex justify-space-between align-center mb-2">
+                        <MudText Typo="Typo.subtitle1"><strong>Destination</strong></MudText>
+                        <MudChip T="string" Size="Size.Small" Color="@(_project.M365Settings is not null ? Color.Primary : Color.Default)">
+                            Microsoft 365
+                        </MudChip>
+                    </div>
+                    @if (_project.M365Settings is not null && !string.IsNullOrEmpty(_project.M365Settings.TenantId))
+                    {
+                        <MudText Typo="Typo.body2">Tenant: <strong>@_project.M365Settings.TenantId[..Math.Min(8, _project.M365Settings.TenantId.Length)]...</strong></MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Client: @_project.M365Settings.ClientId</MudText>
+                        @if (_destMailboxCount > 0)
+                        {
+                            <MudText Typo="Typo.body2" Class="mt-1">
+                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Color="Color.Success" />
+                                @_destMailboxCount mailbox(es) discovered
+                            </MudText>
+                        }
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Warning">Not configured yet.</MudText>
+                    }
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Settings"
+                               OnClick="OpenDestinationConnectorDialog">
+                        Configure
+                    </MudButton>
+                    @if (_project.M365Settings is not null && !string.IsNullOrEmpty(_project.M365Settings.TenantId))
+                    {
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Search"
+                                   OnClick="DiscoverDestinationMailboxes" Disabled="_isDiscoveringDest">
+                            @if (_isDiscoveringDest)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                                <span>Discovering...</span>
+                            }
+                            else
+                            {
+                                <span>Discover Mailboxes</span>
+                            }
+                        </MudButton>
+                    }
+                </MudCardActions>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
     @* Migration Jobs *@
     <div class="d-flex justify-space-between align-center mb-3">
         <MudText Typo="Typo.h6" Class="section-title">Migration Jobs</MudText>
@@ -66,8 +186,7 @@ else
             <HeaderContent>
                 <MudTh>Source Email</MudTh>
                 <MudTh>Destination Email</MudTh>
-                <MudTh>IMAP</MudTh>
-                <MudTh>M365</MudTh>
+                <MudTh>Source Auth</MudTh>
                 <MudTh>Status</MudTh>
                 <MudTh>Created</MudTh>
                 <MudTh Style="width: 180px;">Actions</MudTh>
@@ -78,23 +197,25 @@ else
                 </MudTd>
                 <MudTd DataLabel="Destination Email">
                     <MudText Typo="Typo.body2">
-                        @(string.IsNullOrEmpty(context.DestinationEmail) ? "—" : context.DestinationEmail)
+                        @(string.IsNullOrEmpty(context.DestinationEmail) ? "\u2014" : context.DestinationEmail)
                     </MudText>
                 </MudTd>
-                <MudTd DataLabel="IMAP">
-                    @if (context.ImapSettings is not null && !string.IsNullOrEmpty(context.ImapSettings.Host))
+                <MudTd DataLabel="Source Auth">
+                    @if (context.HasImapOverride && context.ImapSettings is not null && !string.IsNullOrEmpty(context.ImapSettings.Host))
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                            IMAP Override
+                        </MudChip>
+                    }
+                    else if (_project.SourceConnectorType == SourceConnectorType.GoogleWorkspace && !context.HasImapOverride)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">
+                            Google Workspace
+                        </MudChip>
+                    }
+                    else if (context.ImapSettings is not null && !string.IsNullOrEmpty(context.ImapSettings.Host))
                     {
                         <MudText Typo="Typo.body2">@context.ImapSettings.Host:@context.ImapSettings.Port</MudText>
-                    }
-                    else
-                    {
-                        <MudText Typo="Typo.body2" Color="Color.Secondary">Not configured</MudText>
-                    }
-                </MudTd>
-                <MudTd DataLabel="M365">
-                    @if (context.M365Settings is not null && !string.IsNullOrEmpty(context.M365Settings.TenantId))
-                    {
-                        <MudText Typo="Typo.body2">@context.M365Settings.TenantId[..Math.Min(8, context.M365Settings.TenantId.Length)]...</MudText>
                     }
                     else
                     {
@@ -118,7 +239,7 @@ else
                                            OnClick="@(() => OpenExploreDialog(context))" />
                         </MudTooltip>
                     }
-                    @if (context.M365Settings is not null && !string.IsNullOrEmpty(context.M365Settings.TenantId))
+                    @if (_project.M365Settings is not null && !string.IsNullOrEmpty(_project.M365Settings.TenantId))
                     {
                         <MudTooltip Text="Explore M365 Mailbox">
                             <MudIconButton Icon="@Icons.Material.Filled.CloudQueue" Size="Size.Small"
@@ -149,6 +270,10 @@ else
     private List<MigrationJob> _jobs = new();
     private bool _loading = true;
     private List<BreadcrumbItem> _breadcrumbs = new();
+    private int _sourceMailboxCount;
+    private int _destMailboxCount;
+    private bool _isDiscoveringSource;
+    private bool _isDiscoveringDest;
 
     protected override async Task OnInitializedAsync()
     {
@@ -158,7 +283,7 @@ else
     private async Task LoadData()
     {
         _loading = true;
-        _project = await ProjectRepository.GetByIdAsync(ProjectId);
+        _project = await ProjectRepository.GetByIdWithConnectorsAsync(ProjectId);
 
         if (_project is null)
         {
@@ -167,12 +292,115 @@ else
         }
 
         _jobs = await JobRepository.GetByProjectIdAsync(ProjectId);
+        _sourceMailboxCount = _project.DiscoveredMailboxes.Count(m => m.Side == MailboxSide.Source);
+        _destMailboxCount = _project.DiscoveredMailboxes.Count(m => m.Side == MailboxSide.Destination);
         _breadcrumbs = new List<BreadcrumbItem>
         {
             new("Projects", href: "/projects"),
             new(_project.Name, href: null, disabled: true)
         };
         _loading = false;
+    }
+
+    private async Task OpenSourceConnectorDialog()
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(SourceConnectorDialog.Project), _project }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<SourceConnectorDialog>("Configure Source", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+            await LoadData();
+    }
+
+    private async Task OpenDestinationConnectorDialog()
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(DestinationConnectorDialog.Project), _project }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<DestinationConnectorDialog>("Configure Destination", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+            await LoadData();
+    }
+
+    private async Task DiscoverSourceMailboxes()
+    {
+        if (_project?.GoogleWorkspaceSettings is null) return;
+
+        _isDiscoveringSource = true;
+        StateHasChanged();
+
+        try
+        {
+            var gws = _project.GoogleWorkspaceSettings;
+            var privateKey = CredentialEncryptor.Decrypt(gws.EncryptedPrivateKey!);
+
+            var discovered = await GoogleDiscovery.DiscoverMailboxesAsync(
+                gws.ServiceAccountEmail, privateKey, gws.TokenUri, gws.ImpersonationEmail, gws.Domain);
+
+            var mailboxes = discovered.Select(d => new DiscoveredMailbox
+            {
+                Email = d.Email,
+                DisplayName = d.DisplayName
+            }).ToList();
+
+            await DiscoveredMailboxRepository.ReplaceAllAsync(ProjectId, MailboxSide.Source, mailboxes);
+            Snackbar.Add($"Discovered {discovered.Count} source mailboxes.", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Discovery failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isDiscoveringSource = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DiscoverDestinationMailboxes()
+    {
+        if (_project?.M365Settings is null) return;
+
+        _isDiscoveringDest = true;
+        StateHasChanged();
+
+        try
+        {
+            var m365 = _project.M365Settings;
+            var secret = CredentialEncryptor.Decrypt(m365.EncryptedClientSecret!);
+
+            var discovered = await M365Discovery.DiscoverMailboxesAsync(m365.TenantId!, m365.ClientId!, secret);
+
+            var mailboxes = discovered.Select(d => new DiscoveredMailbox
+            {
+                Email = d.Email,
+                DisplayName = d.DisplayName
+            }).ToList();
+
+            await DiscoveredMailboxRepository.ReplaceAllAsync(ProjectId, MailboxSide.Destination, mailboxes);
+            Snackbar.Add($"Discovered {discovered.Count} destination mailboxes.", Severity.Success);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Discovery failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isDiscoveringDest = false;
+            StateHasChanged();
+        }
     }
 
     private async Task OpenEditProjectDialog()
@@ -205,7 +433,8 @@ else
     {
         var parameters = new DialogParameters
         {
-            { nameof(M365ExploreDialog.Job), job }
+            { nameof(M365ExploreDialog.M365Settings), _project?.M365Settings },
+            { nameof(M365ExploreDialog.DestinationEmail), job.DestinationEmail }
         };
 
         var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
@@ -216,7 +445,10 @@ else
     {
         var parameters = new DialogParameters
         {
-            { nameof(MigrationJobDialog.ProjectId), ProjectId }
+            { nameof(MigrationJobDialog.ProjectId), ProjectId },
+            { nameof(MigrationJobDialog.ProjectSourceConnectorType), _project!.SourceConnectorType },
+            { nameof(MigrationJobDialog.SourceMailboxes), _project.DiscoveredMailboxes.Where(m => m.Side == MailboxSide.Source).ToList() },
+            { nameof(MigrationJobDialog.DestinationMailboxes), _project.DiscoveredMailboxes.Where(m => m.Side == MailboxSide.Destination).ToList() }
         };
 
         var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
@@ -232,7 +464,10 @@ else
         var parameters = new DialogParameters
         {
             { nameof(MigrationJobDialog.ProjectId), ProjectId },
-            { nameof(MigrationJobDialog.ExistingJob), job }
+            { nameof(MigrationJobDialog.ExistingJob), job },
+            { nameof(MigrationJobDialog.ProjectSourceConnectorType), _project!.SourceConnectorType },
+            { nameof(MigrationJobDialog.SourceMailboxes), _project.DiscoveredMailboxes.Where(m => m.Side == MailboxSide.Source).ToList() },
+            { nameof(MigrationJobDialog.DestinationMailboxes), _project.DiscoveredMailboxes.Where(m => m.Side == MailboxSide.Destination).ToList() }
         };
 
         var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
@@ -248,7 +483,7 @@ else
         var parameters = new DialogParameters
         {
             { nameof(DeleteConfirmationDialog.Title), "Delete Migration Job" },
-            { nameof(DeleteConfirmationDialog.Message), $"Are you sure you want to delete the migration job for <strong>{job.SourceEmail}</strong>? This will also remove all associated IMAP and M365 settings." }
+            { nameof(DeleteConfirmationDialog.Message), $"Are you sure you want to delete the migration job for <strong>{job.SourceEmail}</strong>? This will also remove all associated IMAP settings." }
         };
 
         var dialog = await DialogService.ShowAsync<DeleteConfirmationDialog>("Delete Migration Job", parameters);

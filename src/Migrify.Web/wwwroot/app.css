@@ -272,10 +272,21 @@ html, body {
     padding: 16px 24px 24px;
 }
 
-/* Dialog backdrop overlay */
-.mud-overlay {
+/* Dialog backdrop overlay — only blur for dialog overlays, not autocomplete/popover overlays */
+.mud-dialog-container > .mud-overlay {
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
+}
+
+/* Autocomplete/Select popover — solid background, no blur */
+.mud-popover .mud-popover-paper {
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+.dark .mud-popover .mud-popover-paper {
+    background: #1E2030 !important;
 }
 
 /* --------------------------------------------------------------------------
