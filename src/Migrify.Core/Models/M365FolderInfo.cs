@@ -5,4 +5,6 @@ public record M365FolderInfo(
     string DisplayName,
     int TotalItemCount,
     int UnreadItemCount,
-    DateTime? LastMessageDate);
+    DateTime? LastMessageDate,
+    string? ParentId = null,
+    string? DisplayPath = null);

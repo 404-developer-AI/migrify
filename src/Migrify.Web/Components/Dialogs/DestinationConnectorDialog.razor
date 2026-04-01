@@ -169,9 +169,6 @@
             if (!string.IsNullOrEmpty(_clientSecret))
                 Project.M365Settings.EncryptedClientSecret = CredentialEncryptor.Encrypt(_clientSecret);
 
-            if (Project.M365Settings.Id == Guid.Empty)
-                Project.M365Settings.Id = Guid.NewGuid();
-
             await ProjectRepository.UpdateAsync(Project);
             Snackbar.Add("M365 destination connector saved.", Severity.Success);
             MudDialog.Close(DialogResult.Ok(true));

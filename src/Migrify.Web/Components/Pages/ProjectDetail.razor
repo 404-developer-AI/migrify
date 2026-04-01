@@ -187,9 +187,10 @@ else
                 <MudTh>Source Email</MudTh>
                 <MudTh>Destination Email</MudTh>
                 <MudTh>Source Auth</MudTh>
+                <MudTh>Mapping</MudTh>
                 <MudTh>Status</MudTh>
                 <MudTh>Created</MudTh>
-                <MudTh Style="width: 180px;">Actions</MudTh>
+                <MudTh Style="width: 220px;">Actions</MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="Source Email">
@@ -222,6 +223,18 @@ else
                         <MudText Typo="Typo.body2" Color="Color.Secondary">Not configured</MudText>
                     }
                 </MudTd>
+                <MudTd DataLabel="Mapping">
+                    @if (context.FolderMappings.Any())
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">
+                            @context.FolderMappings.Count mapped
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Not mapped</MudText>
+                    }
+                </MudTd>
                 <MudTd DataLabel="Status">
                     <MudChip T="string" Size="Size.Small" Color="@GetJobStatusColor(context.Status)">
                         @context.Status
@@ -245,6 +258,14 @@ else
                             <MudIconButton Icon="@Icons.Material.Filled.CloudQueue" Size="Size.Small"
                                            Color="Color.Primary"
                                            OnClick="@(() => OpenM365ExploreDialog(context))" />
+                        </MudTooltip>
+                    }
+                    @if (HasSourceAccess(context) && _project.M365Settings is not null && !string.IsNullOrEmpty(_project.M365Settings.TenantId))
+                    {
+                        <MudTooltip Text="Map Folders">
+                            <MudIconButton Icon="@Icons.Material.Filled.AccountTree" Size="Size.Small"
+                                           Color="Color.Primary"
+                                           OnClick="@(() => OpenFolderMappingDialog(context))" />
                         </MudTooltip>
                     }
                     <MudTooltip Text="Edit">
@@ -439,6 +460,31 @@ else
 
         var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
         await DialogService.ShowAsync<M365ExploreDialog>("Explore M365 Mailbox", parameters, options);
+    }
+
+    private async Task OpenFolderMappingDialog(MigrationJob job)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(FolderMappingDialog.Job), job },
+            { nameof(FolderMappingDialog.Project), _project }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<FolderMappingDialog>("Folder Mapping", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled)
+            await LoadData();
+    }
+
+    private bool HasSourceAccess(MigrationJob job)
+    {
+        if (job.HasImapOverride || _project!.SourceConnectorType == SourceConnectorType.ManualImap)
+            return job.ImapSettings is not null && !string.IsNullOrEmpty(job.ImapSettings.Host);
+        if (_project.SourceConnectorType == SourceConnectorType.GoogleWorkspace)
+            return _project.GoogleWorkspaceSettings is not null && !string.IsNullOrEmpty(_project.GoogleWorkspaceSettings.EncryptedPrivateKey);
+        return false;
     }
 
     private async Task OpenAddJobDialog()

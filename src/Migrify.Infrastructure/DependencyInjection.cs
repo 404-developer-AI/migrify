@@ -25,6 +25,7 @@ public static class DependencyInjection
         services.AddTransient<IM365MailboxDiscovery, M365MailboxDiscovery>();
         services.AddTransient<IGoogleWorkspaceMailboxDiscovery, GoogleWorkspaceMailboxDiscovery>();
         services.AddScoped<IDiscoveredMailboxRepository, DiscoveredMailboxRepository>();
+        services.AddScoped<IFolderMappingRepository, FolderMappingRepository>();
 
         services.AddHttpClient("ImapAutoDiscovery", client =>
         {

@@ -7,13 +7,16 @@
     </TitleContent>
     <DialogContent>
         <MudText>@((MarkupString)(Message ?? string.Empty))</MudText>
-        <MudText Typo="Typo.body2" Color="Color.Error" Class="mt-2">
-            This action cannot be undone.
-        </MudText>
+        @if (ShowWarningText)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Error" Class="mt-2">
+                This action cannot be undone.
+            </MudText>
+        }
     </DialogContent>
     <DialogActions>
         <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
-        <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="Confirm">Delete</MudButton>
+        <MudButton Color="@ConfirmColor" Variant="Variant.Filled" OnClick="Confirm">@ConfirmText</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -29,6 +32,15 @@
 
     [Parameter]
     public string? Message { get; set; }
+
+    [Parameter]
+    public string ConfirmText { get; set; } = "Delete";
+
+    [Parameter]
+    public Color ConfirmColor { get; set; } = Color.Error;
+
+    [Parameter]
+    public bool ShowWarningText { get; set; } = true;
 
     protected override void OnInitialized()
     {

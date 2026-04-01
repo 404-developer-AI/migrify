@@ -1,0 +1,79 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Create M365 Folder</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (ParentFolders.Count > 0)
+        {
+            <MudSelect T="string" @bind-Value="_selectedParentId" Label="Parent Folder"
+                       Variant="Variant.Outlined" Class="mb-3">
+                <MudSelectItem T="string" Value="@string.Empty">None (top-level folder)</MudSelectItem>
+                @foreach (var folder in ParentFolders)
+                {
+                    <MudSelectItem T="string" Value="@folder.Id">@(folder.DisplayPath ?? folder.DisplayName)</MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (!string.IsNullOrEmpty(_selectedParentId))
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+                    This creates a subfolder under <strong>@GetParentDisplayName()</strong>, not a top-level folder.
+                </MudAlert>
+            }
+        }
+
+        <MudTextField @bind-Value="_folderName" Label="Folder Name" Variant="Variant.Outlined"
+                      Immediate="true" Class="mb-2" AutoFocus="true"
+                      Validation="@(new Func<string, string?>(ValidateFolderName))" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   OnClick="Submit" Disabled="@(string.IsNullOrWhiteSpace(_folderName) || ValidateFolderName(_folderName) is not null)">
+            Create
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public List<string> CurrentFolders { get; set; } = new();
+
+    [Parameter]
+    public List<M365FolderInfo> ParentFolders { get; set; } = new();
+
+    private string _folderName = string.Empty;
+    private string _selectedParentId = string.Empty;
+
+    private string? ValidateFolderName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "Folder name is required.";
+        // Check for duplicates at the same level
+        var parentDisplay = GetParentDisplayName();
+        var fullPath = string.IsNullOrEmpty(parentDisplay) ? name.Trim() : $"{parentDisplay}/{name.Trim()}";
+        if (CurrentFolders.Any(f => string.Equals(f, fullPath, StringComparison.OrdinalIgnoreCase)))
+            return "A folder with this name already exists.";
+        return null;
+    }
+
+    private string GetParentDisplayName()
+    {
+        if (string.IsNullOrEmpty(_selectedParentId)) return string.Empty;
+        var parent = ParentFolders.FirstOrDefault(f => f.Id == _selectedParentId);
+        return parent?.DisplayPath ?? parent?.DisplayName ?? string.Empty;
+    }
+
+    private void Submit()
+    {
+        if (ValidateFolderName(_folderName) is null)
+            MudDialog.Close(DialogResult.Ok(new CreateFolderResult(_folderName.Trim(), _selectedParentId)));
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+
+    public record CreateFolderResult(string FolderName, string? ParentFolderId);
+}

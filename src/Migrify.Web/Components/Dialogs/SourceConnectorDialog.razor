@@ -281,8 +281,6 @@
                 if (!string.IsNullOrEmpty(_privateKey))
                     Project.GoogleWorkspaceSettings.EncryptedPrivateKey = CredentialEncryptor.Encrypt(_privateKey);
 
-                if (Project.GoogleWorkspaceSettings.Id == Guid.Empty)
-                    Project.GoogleWorkspaceSettings.Id = Guid.NewGuid();
             }
 
             await ProjectRepository.UpdateAsync(Project);

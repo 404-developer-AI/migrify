@@ -22,7 +22,7 @@
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd DataLabel="Folder">
-                        <MudText Typo="Typo.body2">@context.DisplayName</MudText>
+                        <MudText Typo="Typo.body2">@(context.DisplayPath ?? context.DisplayName)</MudText>
                     </MudTd>
                     <MudTd DataLabel="Items" Style="text-align: right;">
                         <MudText Typo="Typo.body2">@context.TotalItemCount.ToString("N0")</MudText>

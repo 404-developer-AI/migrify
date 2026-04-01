@@ -17,6 +17,7 @@ public class MigrationJobRepository : IMigrationJobRepository
     {
         return await _db.MigrationJobs
             .Include(j => j.ImapSettings)
+            .Include(j => j.FolderMappings)
             .Where(j => j.ProjectId == projectId)
             .OrderByDescending(j => j.CreatedAt)
             .ToListAsync();
@@ -26,6 +27,7 @@ public class MigrationJobRepository : IMigrationJobRepository
     {
         return await _db.MigrationJobs
             .Include(j => j.ImapSettings)
+            .Include(j => j.FolderMappings)
             .FirstOrDefaultAsync(j => j.Id == id);
     }
 
@@ -46,7 +48,6 @@ public class MigrationJobRepository : IMigrationJobRepository
     public async Task UpdateAsync(MigrationJob job)
     {
         job.UpdatedAt = DateTime.UtcNow;
-        _db.MigrationJobs.Update(job);
         await _db.SaveChangesAsync();
     }
 

@@ -10,6 +10,7 @@ namespace Migrify.Infrastructure.Services;
 public class M365MailboxExplorer(ILogger<M365MailboxExplorer> logger) : IM365MailboxExplorer
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan CreateTimeout = TimeSpan.FromSeconds(30);
 
     public async Task<M365ExploreResult> ExploreAsync(string tenantId, string clientId, string clientSecret, string userEmail)
     {
@@ -87,15 +88,51 @@ public class M365MailboxExplorer(ILogger<M365MailboxExplorer> logger) : IM365Mai
                     }
                 }
 
+                var displayName = folder.DisplayName ?? "(unnamed)";
                 folders.Add(new M365FolderInfo(
                     folder.Id ?? string.Empty,
-                    folder.DisplayName ?? "(unnamed)",
+                    displayName,
                     totalItems,
                     folder.UnreadItemCount ?? 0,
-                    lastMessageDate));
+                    lastMessageDate,
+                    ParentId: null,
+                    DisplayPath: displayName));
+
+                // Load child folders (1 level deep)
+                try
+                {
+                    var childResponse = await graphClient.Users[userEmail]
+                        .MailFolders[folder.Id]
+                        .ChildFolders
+                        .GetAsync(config =>
+                        {
+                            config.QueryParameters.Top = 100;
+                            config.QueryParameters.Select = ["id", "displayName", "totalItemCount", "unreadItemCount"];
+                        }, cts.Token);
+
+                    if (childResponse?.Value is not null)
+                    {
+                        foreach (var child in childResponse.Value)
+                        {
+                            var childName = child.DisplayName ?? "(unnamed)";
+                            folders.Add(new M365FolderInfo(
+                                child.Id ?? string.Empty,
+                                childName,
+                                child.TotalItemCount ?? 0,
+                                child.UnreadItemCount ?? 0,
+                                null,
+                                ParentId: folder.Id,
+                                DisplayPath: $"{displayName}/{childName}"));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "Could not retrieve child folders for {Folder}", displayName);
+                }
             }
 
-            logger.LogInformation("M365 exploration complete for {Email}: {FolderCount} folders, {TotalItems} total items",
+            logger.LogInformation("M365 exploration complete for {Email}: {FolderCount} folders (incl. subfolders), {TotalItems} total items",
                 userEmail, folders.Count, folders.Sum(f => f.TotalItemCount));
 
             return new M365ExploreResult(true, null, folders);
@@ -111,5 +148,40 @@ public class M365MailboxExplorer(ILogger<M365MailboxExplorer> logger) : IM365Mai
             logger.LogError(ex, "M365 exploration failed for {Email}", userEmail);
             return new M365ExploreResult(false, message, []);
         }
+    }
+
+    public async Task<M365FolderInfo> CreateFolderAsync(string tenantId, string clientId, string clientSecret, string userEmail, string folderDisplayName, string? parentFolderId = null)
+    {
+        using var cts = new CancellationTokenSource(CreateTimeout);
+
+        logger.LogDebug("Creating M365 mail folder '{FolderName}' (parent: {ParentId}) for {Email}",
+            folderDisplayName, parentFolderId ?? "top-level", userEmail);
+
+        var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+        var graphClient = new GraphServiceClient(credential);
+
+        MailFolder? newFolder;
+        if (string.IsNullOrEmpty(parentFolderId))
+        {
+            newFolder = await graphClient.Users[userEmail].MailFolders.PostAsync(
+                new MailFolder { DisplayName = folderDisplayName }, cancellationToken: cts.Token);
+        }
+        else
+        {
+            newFolder = await graphClient.Users[userEmail].MailFolders[parentFolderId].ChildFolders.PostAsync(
+                new MailFolder { DisplayName = folderDisplayName }, cancellationToken: cts.Token);
+        }
+
+        logger.LogInformation("Created M365 mail folder '{FolderName}' (Id: {FolderId}) for {Email}",
+            folderDisplayName, newFolder?.Id, userEmail);
+
+        return new M365FolderInfo(
+            newFolder?.Id ?? string.Empty,
+            newFolder?.DisplayName ?? folderDisplayName,
+            newFolder?.TotalItemCount ?? 0,
+            newFolder?.UnreadItemCount ?? 0,
+            null,
+            ParentId: parentFolderId,
+            DisplayPath: null); // DisplayPath wordt door de caller gezet (kent de parent naam)
     }
 }

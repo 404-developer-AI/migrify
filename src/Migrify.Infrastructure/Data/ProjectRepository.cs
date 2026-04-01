@@ -54,7 +54,6 @@ public class ProjectRepository : IProjectRepository
     public async Task UpdateAsync(Project project)
     {
         project.UpdatedAt = DateTime.UtcNow;
-        _db.Projects.Update(project);
         await _db.SaveChangesAsync();
     }
 

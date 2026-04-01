@@ -10,12 +10,18 @@
 Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's self-hosted mail server from 2003) to Microsoft 365 Exchange Online.
 
 **Features so far:**
-- Project-based migration management
-- IMAP connection testing & mailbox exploration
+- Project-based migration management with connector model (source + destination per project)
+- IMAP connection testing & mailbox exploration (password + OAuth2)
 - IMAP OAuth2 authentication (Gmail / Google Workspace)
-- Microsoft 365 connection testing via Graph API
-- M365 mailbox exploration
-- Migration job management per project
+- Google Workspace source connector with service account & domain-wide delegation
+- Microsoft 365 destination connector via Graph SDK (app-only auth)
+- M365 mailbox exploration (including subfolders)
+- Bulk mailbox discovery: Google Admin SDK (source) + Graph API User.Read.All (destination)
+- Migration job management per project with autocomplete mailbox selection
+- Per-job folder mapping: source (IMAP) to destination (M365) folder mapping
+- Auto-map for common folders (Inbox, Sent, Drafts, etc.)
+- M365 folder & subfolder creation from within the mapping dialog
+- Validation warnings for unmapped folders containing emails
 - Clean admin dashboard with premium UI (thanks MudBlazor)
 
 ## Tech Stack
@@ -33,7 +39,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 
 **Work in progress.** Very much in progress. Like, "the foundation is there but the house has no roof" kind of progress.
 
-Current version: `v0.0.5`
+Current version: `v0.0.8`
 
 The version numbering starts at 0.0.1 because even 1.0 feels too optimistic right now.
 

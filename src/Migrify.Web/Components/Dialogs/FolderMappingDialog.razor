@@ -1,0 +1,614 @@
+@using Google.Apis.Auth.OAuth2
+@inject IImapMailboxExplorer ImapExplorer
+@inject IM365MailboxExplorer M365Explorer
+@inject ICredentialEncryptor CredentialEncryptor
+@inject IImapOAuthCredentialProvider OAuthCredentialProvider
+@inject IFolderMappingRepository MappingRepository
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Folder Mapping — @Job.SourceEmail → @Job.DestinationEmail</MudText>
+    </TitleContent>
+    <DialogContent>
+        @* Loading phase *@
+        @if (_isLoadingSource || _isLoadingDest)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-3" />
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                @if (_isLoadingSource && _isLoadingDest)
+                {
+                    <span>Loading source and destination folders...</span>
+                }
+                else if (_isLoadingSource)
+                {
+                    <span>Loading source folders...</span>
+                }
+                else
+                {
+                    <span>Loading destination folders...</span>
+                }
+            </MudText>
+        }
+
+        @* Error messages *@
+        @if (!string.IsNullOrEmpty(_sourceError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">Source: @_sourceError</MudAlert>
+        }
+        @if (!string.IsNullOrEmpty(_destError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">Destination: @_destError</MudAlert>
+        }
+
+        @* Folder summary *@
+        @if (_sourceFolders is not null || _destFolders is not null)
+        {
+            <MudGrid Class="mb-4">
+                <MudItem xs="6">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Source Folders</MudText>
+                    @if (_sourceFolders is not null)
+                    {
+                        <MudText Typo="Typo.body2">
+                            @_sourceFolders.Count folder(s) — @_sourceFolders.Sum(f => f.MessageCount).ToString("N0") messages
+                        </MudText>
+                    }
+                </MudItem>
+                <MudItem xs="6">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Destination Folders</MudText>
+                    @if (_destFolders is not null)
+                    {
+                        <MudText Typo="Typo.body2">
+                            @_destFolders.Count folder(s) — @_destFolders.Sum(f => f.TotalItemCount).ToString("N0") items
+                        </MudText>
+                    }
+                </MudItem>
+            </MudGrid>
+        }
+
+        @* Action bar *@
+        @if (_sourceFolders is not null && _destFolders is not null)
+        {
+            <div class="d-flex gap-2 mb-4">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.AutoAwesome"
+                           OnClick="AutoMap" Disabled="_isLoadingSource || _isLoadingDest">
+                    Auto-map
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add"
+                           OnClick="AddMapping" Disabled="_isLoadingSource || _isLoadingDest">
+                    Add Mapping
+                </MudButton>
+            </div>
+
+            @* Mappings table *@
+            @if (_mappings.Count > 0)
+            {
+                <MudTable Items="_mappings" Hover="true" Elevation="0" Dense="true">
+                    <HeaderContent>
+                        <MudTh>Source Folder</MudTh>
+                        <MudTh Style="text-align: right;">Messages</MudTh>
+                        <MudTh>Date Range</MudTh>
+                        <MudTh Style="width: 30px;"></MudTh>
+                        <MudTh>Destination Folder</MudTh>
+                        <MudTh Style="text-align: right;">Items</MudTh>
+                        <MudTh Style="width: 50px;"></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Source Folder">
+                            <MudSelect T="string" Value="context.SourceFolderName"
+                                       ValueChanged="@(v => OnSourceChanged(context, v))"
+                                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined">
+                                @foreach (var folder in _sourceFolders)
+                                {
+                                    <MudSelectItem T="string" Value="@folder.FullName">
+                                        @folder.FullName (@folder.MessageCount.ToString("N0"))
+                                    </MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudTd>
+                        <MudTd DataLabel="Messages" Style="text-align: right;">
+                            <MudText Typo="Typo.body2">@GetSourceMessageCount(context.SourceFolderName).ToString("N0")</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Date Range">
+                            <MudText Typo="Typo.body2">@GetSourceDateRange(context.SourceFolderName)</MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" Color="Color.Secondary" />
+                        </MudTd>
+                        <MudTd DataLabel="Destination Folder">
+                            <MudSelect T="string" Value="context.DestinationFolderId"
+                                       ValueChanged="@(v => OnDestChanged(context, v))"
+                                       Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined">
+                                @foreach (var folder in _destFolders)
+                                {
+                                    <MudSelectItem T="string" Value="@folder.Id">
+                                        @(folder.DisplayPath ?? folder.DisplayName) (@folder.TotalItemCount.ToString("N0"))
+                                    </MudSelectItem>
+                                }
+                                <MudSelectItem T="string" Value="@NewFolderSentinel">
+                                    + New Folder...
+                                </MudSelectItem>
+                            </MudSelect>
+                        </MudTd>
+                        <MudTd DataLabel="Items" Style="text-align: right;">
+                            <MudText Typo="Typo.body2">@GetDestItemCount(context.DestinationFolderId).ToString("N0")</MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                           Color="Color.Error" OnClick="@(() => RemoveMapping(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Info" Class="mb-3">
+                    No folder mappings yet. Use "Auto-map" or "Add Mapping" to get started.
+                </MudAlert>
+            }
+
+            @* Unmapped folders warning *@
+            @if (GetUnmappedFoldersWithMails().Any())
+            {
+                <MudAlert Severity="Severity.Warning" Class="mt-4">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Unmapped folders with emails (will NOT be migrated):</MudText>
+                    <ul style="margin: 0; padding-left: 20px;">
+                        @foreach (var folder in GetUnmappedFoldersWithMails())
+                        {
+                            <li>@folder.FullName — @folder.MessageCount.ToString("N0") message(s)</li>
+                        }
+                    </ul>
+                </MudAlert>
+            }
+        }
+
+        @* Creating folder indicator *@
+        @if (_isCreatingFolder)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-3" />
+            <MudText Typo="Typo.body2" Color="Color.Secondary">Creating folder on M365...</MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Save"
+                   OnClick="Save"
+                   Disabled="@(_isLoadingSource || _isLoadingDest || _isSaving || _isCreatingFolder)">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                <span>Saving...</span>
+            }
+            else
+            {
+                <span>Save</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const string NewFolderSentinel = "__NEW_FOLDER__";
+
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public MigrationJob Job { get; set; } = null!;
+
+    [Parameter]
+    public Project Project { get; set; } = null!;
+
+    private List<ImapFolderInfo>? _sourceFolders;
+    private List<M365FolderInfo>? _destFolders;
+    private List<MappingRow> _mappings = new();
+
+    private bool _isLoadingSource;
+    private bool _isLoadingDest;
+    private bool _isSaving;
+    private bool _isCreatingFolder;
+    private string? _sourceError;
+    private string? _destError;
+
+    // Row being edited for new folder creation
+    private MappingRow? _pendingNewFolderRow;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load existing mappings from DB
+        var existing = await MappingRepository.GetByJobIdAsync(Job.Id);
+        _mappings = existing.Select(m => new MappingRow
+        {
+            SourceFolderName = m.SourceFolderName,
+            DestinationFolderId = m.DestinationFolderId,
+            DestinationFolderDisplayName = m.DestinationFolderDisplayName
+        }).ToList();
+
+        // Load both folder lists in parallel
+        _isLoadingSource = true;
+        _isLoadingDest = true;
+        StateHasChanged();
+
+        var sourceTask = LoadSourceFolders();
+        var destTask = LoadDestFolders();
+        await Task.WhenAll(sourceTask, destTask);
+
+        StateHasChanged();
+    }
+
+    private async Task LoadSourceFolders()
+    {
+        try
+        {
+            ImapExploreResult result;
+
+            if (Job.HasImapOverride || Project.SourceConnectorType == SourceConnectorType.ManualImap)
+            {
+                // Use job's IMAP settings
+                var imap = Job.ImapSettings;
+                if (imap is null || string.IsNullOrWhiteSpace(imap.Host))
+                {
+                    _sourceError = "IMAP settings not configured for this job.";
+                    return;
+                }
+
+                if (imap.AuthType == ImapAuthType.OAuth2)
+                {
+                    var accessToken = await OAuthCredentialProvider.GetAccessTokenAsync(imap);
+                    result = await ImapExplorer.ExploreAsync(
+                        imap.Host, imap.Port, imap.Encryption,
+                        ImapAuthType.OAuth2, imap.Username ?? string.Empty, null, accessToken);
+                }
+                else
+                {
+                    if (string.IsNullOrEmpty(imap.EncryptedPassword))
+                    {
+                        _sourceError = "No IMAP password configured.";
+                        return;
+                    }
+                    var password = CredentialEncryptor.Decrypt(imap.EncryptedPassword);
+                    result = await ImapExplorer.ExploreAsync(
+                        imap.Host, imap.Port, imap.Encryption,
+                        imap.Username ?? string.Empty, password);
+                }
+            }
+            else if (Project.SourceConnectorType == SourceConnectorType.GoogleWorkspace)
+            {
+                // Use service account to impersonate the source email via IMAP
+                var gws = Project.GoogleWorkspaceSettings;
+                if (gws is null || string.IsNullOrEmpty(gws.EncryptedPrivateKey))
+                {
+                    _sourceError = "Google Workspace settings not configured.";
+                    return;
+                }
+
+                var privateKey = CredentialEncryptor.Decrypt(gws.EncryptedPrivateKey);
+                var credential = new ServiceAccountCredential(
+                    new ServiceAccountCredential.Initializer(gws.ServiceAccountEmail)
+                    {
+                        Scopes = ["https://mail.google.com/"],
+                        User = Job.SourceEmail
+                    }.FromPrivateKey(privateKey));
+
+                await credential.RequestAccessTokenAsync(CancellationToken.None);
+                var accessToken = credential.Token.AccessToken;
+
+                result = await ImapExplorer.ExploreAsync(
+                    "imap.gmail.com", 993, ImapEncryption.SSL,
+                    ImapAuthType.OAuth2, Job.SourceEmail, null, accessToken);
+            }
+            else
+            {
+                _sourceError = "Unknown source connector type.";
+                return;
+            }
+
+            if (result.Success)
+            {
+                _sourceFolders = result.Folders;
+            }
+            else
+            {
+                _sourceError = result.ErrorMessage ?? "Failed to load source folders.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _sourceError = ex.Message;
+        }
+        finally
+        {
+            _isLoadingSource = false;
+        }
+    }
+
+    private async Task LoadDestFolders()
+    {
+        try
+        {
+            var m365 = Project.M365Settings;
+            if (m365 is null || string.IsNullOrWhiteSpace(m365.TenantId) || string.IsNullOrWhiteSpace(m365.ClientId))
+            {
+                _destError = "M365 settings not configured for this project.";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(m365.EncryptedClientSecret))
+            {
+                _destError = "No M365 client secret configured.";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(Job.DestinationEmail))
+            {
+                _destError = "No destination email specified.";
+                return;
+            }
+
+            var clientSecret = CredentialEncryptor.Decrypt(m365.EncryptedClientSecret);
+            var result = await M365Explorer.ExploreAsync(m365.TenantId, m365.ClientId, clientSecret, Job.DestinationEmail);
+
+            if (result.Success)
+            {
+                _destFolders = result.Folders;
+            }
+            else
+            {
+                _destError = result.ErrorMessage ?? "Failed to load destination folders.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _destError = ex.Message;
+        }
+        finally
+        {
+            _isLoadingDest = false;
+        }
+    }
+
+    private void AddMapping()
+    {
+        _mappings.Add(new MappingRow());
+    }
+
+    private void RemoveMapping(MappingRow row)
+    {
+        _mappings.Remove(row);
+    }
+
+    private void OnSourceChanged(MappingRow row, string value)
+    {
+        row.SourceFolderName = value;
+    }
+
+    private async Task OnDestChanged(MappingRow row, string value)
+    {
+        if (value == NewFolderSentinel)
+        {
+            _pendingNewFolderRow = row;
+            await CreateNewFolder(row);
+            return;
+        }
+
+        row.DestinationFolderId = value;
+        var folder = _destFolders?.FirstOrDefault(f => f.Id == value);
+        row.DestinationFolderDisplayName = folder?.DisplayName ?? string.Empty;
+    }
+
+    private async Task CreateNewFolder(MappingRow row)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(CreateFolderInlineDialog.CurrentFolders), _destFolders?.Select(f => f.DisplayPath ?? f.DisplayName).ToList() ?? new() },
+            { nameof(CreateFolderInlineDialog.ParentFolders), _destFolders?.ToList() ?? new() }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateFolderInlineDialog>("Create M365 Folder", parameters, options);
+        var dialogResult = await dialog.Result;
+
+        if (dialogResult is not null && !dialogResult.Canceled && dialogResult.Data is CreateFolderInlineDialog.CreateFolderResult result)
+        {
+            _isCreatingFolder = true;
+            StateHasChanged();
+
+            try
+            {
+                var m365 = Project.M365Settings!;
+                var clientSecret = CredentialEncryptor.Decrypt(m365.EncryptedClientSecret!);
+                var parentId = string.IsNullOrEmpty(result.ParentFolderId) ? null : result.ParentFolderId;
+
+                var newFolder = await M365Explorer.CreateFolderAsync(
+                    m365.TenantId!, m365.ClientId!, clientSecret, Job.DestinationEmail, result.FolderName, parentId);
+
+                // Build display path
+                string displayPath;
+                if (parentId is not null)
+                {
+                    var parent = _destFolders!.FirstOrDefault(f => f.Id == parentId);
+                    var parentPath = parent?.DisplayPath ?? parent?.DisplayName ?? "";
+                    displayPath = $"{parentPath}/{newFolder.DisplayName}";
+                }
+                else
+                {
+                    displayPath = newFolder.DisplayName;
+                }
+
+                var folderWithPath = newFolder with { DisplayPath = displayPath };
+                _destFolders!.Add(folderWithPath);
+                row.DestinationFolderId = folderWithPath.Id;
+                row.DestinationFolderDisplayName = folderWithPath.DisplayName;
+                Snackbar.Add($"Folder '{displayPath}' created.", Severity.Success);
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add($"Failed to create folder: {ex.Message}", Severity.Error);
+                row.DestinationFolderId = string.Empty;
+                row.DestinationFolderDisplayName = string.Empty;
+            }
+            finally
+            {
+                _isCreatingFolder = false;
+                _pendingNewFolderRow = null;
+                StateHasChanged();
+            }
+        }
+        else
+        {
+            row.DestinationFolderId = string.Empty;
+            row.DestinationFolderDisplayName = string.Empty;
+            _pendingNewFolderRow = null;
+        }
+    }
+
+    private void AutoMap()
+    {
+        if (_sourceFolders is null || _destFolders is null) return;
+
+        var autoMapRules = new (string[] SourcePatterns, string DestDisplayName)[]
+        {
+            (["INBOX"], "Inbox"),
+            (["Sent", "Sent Items", "Sent Mail", "[Gmail]/Sent Mail"], "Sent Items"),
+            (["Drafts", "[Gmail]/Drafts"], "Drafts"),
+            (["Trash", "Deleted Items", "[Gmail]/Trash"], "Deleted Items"),
+            (["Junk", "Junk E-Mail", "Spam", "[Gmail]/Spam"], "Junk Email"),
+            (["Archive", "[Gmail]/All Mail"], "Archive"),
+        };
+
+        var mappedSourceFolders = _mappings.Select(m => m.SourceFolderName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        int matched = 0;
+
+        foreach (var (sourcePatterns, destDisplayName) in autoMapRules)
+        {
+
+            // Find matching source folder
+            var sourceFolder = _sourceFolders.FirstOrDefault(f =>
+                sourcePatterns.Any(p =>
+                    string.Equals(f.FullName, p, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(f.Name, p, StringComparison.OrdinalIgnoreCase)));
+
+            if (sourceFolder is null) continue;
+            if (mappedSourceFolders.Contains(sourceFolder.FullName)) continue;
+
+            // Find matching destination folder
+            var destFolder = _destFolders.FirstOrDefault(f =>
+                string.Equals(f.DisplayName, destDisplayName, StringComparison.OrdinalIgnoreCase));
+
+            if (destFolder is null) continue;
+
+            _mappings.Add(new MappingRow
+            {
+                SourceFolderName = sourceFolder.FullName,
+                DestinationFolderId = destFolder.Id,
+                DestinationFolderDisplayName = destFolder.DisplayName
+            });
+
+            mappedSourceFolders.Add(sourceFolder.FullName);
+            matched++;
+        }
+
+        if (matched > 0)
+        {
+            Snackbar.Add($"Auto-mapped {matched} folder(s).", Severity.Success);
+        }
+        else
+        {
+            Snackbar.Add("No additional folders could be auto-mapped.", Severity.Info);
+        }
+    }
+
+    private async Task Save()
+    {
+        // Check for unmapped folders with emails
+        var unmapped = GetUnmappedFoldersWithMails();
+        if (unmapped.Any())
+        {
+            var folderList = string.Join("", unmapped.Select(f => $"<li>{f.FullName} — {f.MessageCount:N0} message(s)</li>"));
+            var parameters = new DialogParameters
+            {
+                { nameof(DeleteConfirmationDialog.Title), "Unmapped Folders with Emails" },
+                { nameof(DeleteConfirmationDialog.Message),
+                    $"The following folders have emails but are not mapped and will <strong>NOT</strong> be migrated:<br/><ul>{folderList}</ul>Do you want to save anyway?" },
+                { nameof(DeleteConfirmationDialog.ConfirmText), "Save Anyway" },
+                { nameof(DeleteConfirmationDialog.ConfirmColor), Color.Warning },
+                { nameof(DeleteConfirmationDialog.ShowWarningText), false }
+            };
+            var confirmDialog = await DialogService.ShowAsync<DeleteConfirmationDialog>("Confirm", parameters);
+            var confirmResult = await confirmDialog.Result;
+
+            if (confirmResult is null || confirmResult.Canceled) return;
+        }
+
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            var entities = _mappings
+                .Where(m => !string.IsNullOrEmpty(m.SourceFolderName) && !string.IsNullOrEmpty(m.DestinationFolderId))
+                .Select(m => new FolderMapping
+                {
+                    SourceFolderName = m.SourceFolderName,
+                    DestinationFolderId = m.DestinationFolderId,
+                    DestinationFolderDisplayName = m.DestinationFolderDisplayName
+                }).ToList();
+
+            await MappingRepository.SaveMappingsAsync(Job.Id, entities);
+            Snackbar.Add($"Saved {entities.Count} folder mapping(s).", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to save: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+
+    private int GetSourceMessageCount(string? folderName)
+    {
+        if (string.IsNullOrEmpty(folderName) || _sourceFolders is null) return 0;
+        return _sourceFolders.FirstOrDefault(f => f.FullName == folderName)?.MessageCount ?? 0;
+    }
+
+    private string GetSourceDateRange(string? folderName)
+    {
+        if (string.IsNullOrEmpty(folderName) || _sourceFolders is null) return "—";
+        var folder = _sourceFolders.FirstOrDefault(f => f.FullName == folderName);
+        if (folder is null) return "—";
+        var first = folder.FirstMessageDate?.ToString("dd-MM-yyyy") ?? "?";
+        var last = folder.LastMessageDate?.ToString("dd-MM-yyyy") ?? "?";
+        return folder.MessageCount > 0 ? $"{first} — {last}" : "—";
+    }
+
+    private int GetDestItemCount(string? folderId)
+    {
+        if (string.IsNullOrEmpty(folderId) || _destFolders is null) return 0;
+        return _destFolders.FirstOrDefault(f => f.Id == folderId)?.TotalItemCount ?? 0;
+    }
+
+    private List<ImapFolderInfo> GetUnmappedFoldersWithMails()
+    {
+        if (_sourceFolders is null) return new();
+        var mappedSources = _mappings
+            .Where(m => !string.IsNullOrEmpty(m.SourceFolderName))
+            .Select(m => m.SourceFolderName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _sourceFolders.Where(f => f.MessageCount > 0 && !mappedSources.Contains(f.FullName)).ToList();
+    }
+
+    private class MappingRow
+    {
+        public string SourceFolderName { get; set; } = string.Empty;
+        public string DestinationFolderId { get; set; } = string.Empty;
+        public string DestinationFolderDisplayName { get; set; } = string.Empty;
+    }
+
+}

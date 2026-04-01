@@ -15,4 +15,5 @@ public class MigrationJob
 
     public Project Project { get; set; } = null!;
     public ImapSettings? ImapSettings { get; set; }
+    public ICollection<FolderMapping> FolderMappings { get; set; } = new List<FolderMapping>();
 }
