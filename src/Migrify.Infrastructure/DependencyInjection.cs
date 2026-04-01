@@ -41,6 +41,12 @@ public static class DependencyInjection
         services.AddTransient<IOAuthTokenService, GoogleOAuthTokenService>();
         services.AddScoped<IImapOAuthCredentialProvider, ImapOAuthCredentialProvider>();
 
+        // Migration engine
+        services.AddSingleton<MigrationQueueService>();
+        services.AddSingleton<IMigrationQueueService>(sp => sp.GetRequiredService<MigrationQueueService>());
+        services.AddTransient<IMigrationEngine, MigrationEngine>();
+        services.AddHostedService<MigrationBackgroundService>();
+
         return services;
     }
 }

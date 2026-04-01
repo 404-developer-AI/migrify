@@ -16,6 +16,7 @@ public class MigrationJobRepository : IMigrationJobRepository
     public async Task<List<MigrationJob>> GetByProjectIdAsync(Guid projectId)
     {
         return await _db.MigrationJobs
+            .AsNoTracking()
             .Include(j => j.ImapSettings)
             .Include(j => j.FolderMappings)
             .Where(j => j.ProjectId == projectId)
@@ -28,6 +29,18 @@ public class MigrationJobRepository : IMigrationJobRepository
         return await _db.MigrationJobs
             .Include(j => j.ImapSettings)
             .Include(j => j.FolderMappings)
+            .FirstOrDefaultAsync(j => j.Id == id);
+    }
+
+    public async Task<MigrationJob?> GetByIdWithProjectAsync(Guid id)
+    {
+        return await _db.MigrationJobs
+            .Include(j => j.ImapSettings)
+            .Include(j => j.FolderMappings)
+            .Include(j => j.Project)
+                .ThenInclude(p => p.M365Settings)
+            .Include(j => j.Project)
+                .ThenInclude(p => p.GoogleWorkspaceSettings)
             .FirstOrDefaultAsync(j => j.Id == id);
     }
 
@@ -48,6 +61,19 @@ public class MigrationJobRepository : IMigrationJobRepository
     public async Task UpdateAsync(MigrationJob job)
     {
         job.UpdatedAt = DateTime.UtcNow;
+
+        var entry = _db.Entry(job);
+        if (entry.State == EntityState.Detached)
+        {
+            // Detach any already-tracked instance with the same key to avoid conflict
+            var tracked = _db.ChangeTracker.Entries<MigrationJob>()
+                .FirstOrDefault(e => e.Entity.Id == job.Id);
+            if (tracked is not null)
+                tracked.State = EntityState.Detached;
+
+            _db.MigrationJobs.Update(job);
+        }
+
         await _db.SaveChangesAsync();
     }
 

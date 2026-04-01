@@ -9,6 +9,8 @@
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
+@inject IMigrationQueueService MigrationQueue
+@implements IDisposable
 
 <PageTitle>@(_project?.Name ?? "Project") - Migrify</PageTitle>
 
@@ -236,9 +238,36 @@ else
                     }
                 </MudTd>
                 <MudTd DataLabel="Status">
-                    <MudChip T="string" Size="Size.Small" Color="@GetJobStatusColor(context.Status)">
-                        @context.Status
-                    </MudChip>
+                    @if (context.Status == MigrationJobStatus.Completed && !string.IsNullOrEmpty(context.ErrorMessage))
+                    {
+                        <MudTooltip Text="@context.ErrorMessage">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning">
+                                Completed
+                            </MudChip>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="@GetJobStatusColor(context.Status)">
+                            @context.Status
+                        </MudChip>
+                    }
+                    @if (context.Status == MigrationJobStatus.Running)
+                    {
+                        <MudProgressLinear Value="@GetProgressPercent(context)" Color="Color.Primary"
+                                           Class="mt-1" Rounded="true" Size="Size.Small" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            @context.ProcessedMessages / @context.TotalMessages
+                            @if (!string.IsNullOrEmpty(context.CurrentFolder))
+                            {
+                                <span> — @context.CurrentFolder</span>
+                            }
+                        </MudText>
+                    }
+                    @if (context.Status == MigrationJobStatus.Failed && !string.IsNullOrEmpty(context.ErrorMessage))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">@context.ErrorMessage</MudText>
+                    }
                 </MudTd>
                 <MudTd DataLabel="Created">
                     <MudText Typo="Typo.body2">@context.CreatedAt.ToString("dd-MM-yyyy HH:mm")</MudText>
@@ -268,14 +297,32 @@ else
                                            OnClick="@(() => OpenFolderMappingDialog(context))" />
                         </MudTooltip>
                     }
+                    @if (CanStartMigration(context))
+                    {
+                        <MudTooltip Text="Start Migration">
+                            <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small"
+                                           Color="Color.Success"
+                                           OnClick="@(() => StartMigration(context))" />
+                        </MudTooltip>
+                    }
+                    @if (context.Status == MigrationJobStatus.Running)
+                    {
+                        <MudTooltip Text="Cancel Migration">
+                            <MudIconButton Icon="@Icons.Material.Filled.Stop" Size="Size.Small"
+                                           Color="Color.Error"
+                                           OnClick="@(() => CancelMigration(context))" />
+                        </MudTooltip>
+                    }
                     <MudTooltip Text="Edit">
                         <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
-                                       OnClick="@(() => OpenEditJobDialog(context))" />
+                                       OnClick="@(() => OpenEditJobDialog(context))"
+                                       Disabled="@(context.Status == MigrationJobStatus.Running)" />
                     </MudTooltip>
                     <MudTooltip Text="Delete">
                         <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
                                        Color="Color.Error"
-                                       OnClick="@(() => OpenDeleteJobDialog(context))" />
+                                       OnClick="@(() => OpenDeleteJobDialog(context))"
+                                       Disabled="@(context.Status == MigrationJobStatus.Running)" />
                     </MudTooltip>
                 </MudTd>
             </RowTemplate>
@@ -295,10 +342,14 @@ else
     private int _destMailboxCount;
     private bool _isDiscoveringSource;
     private bool _isDiscoveringDest;
+    private Timer? _refreshTimer;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadData();
+
+        if (_jobs.Any(j => j.Status == MigrationJobStatus.Running))
+            StartProgressTimer();
     }
 
     private async Task LoadData()
@@ -562,4 +613,75 @@ else
         MigrationJobStatus.Cancelled => Color.Dark,
         _ => Color.Default
     };
+
+    private bool CanStartMigration(MigrationJob job)
+    {
+        return job.FolderMappings.Any()
+            && job.Status is MigrationJobStatus.New or MigrationJobStatus.Ready
+                or MigrationJobStatus.Failed or MigrationJobStatus.Cancelled
+            && HasSourceAccess(job)
+            && _project?.M365Settings is not null
+            && !string.IsNullOrEmpty(_project.M365Settings.TenantId);
+    }
+
+    private async Task StartMigration(MigrationJob job)
+    {
+        // Set status immediately so UI reflects the change
+        job.Status = MigrationJobStatus.Running;
+        job.ProcessedMessages = 0;
+        job.TotalMessages = 0;
+        job.ErrorMessage = null;
+        job.CurrentFolder = "Starting...";
+        await JobRepository.UpdateAsync(job);
+
+        await MigrationQueue.EnqueueAsync(job.Id);
+        Snackbar.Add($"Migration started for {job.SourceEmail}.", Severity.Success);
+        StartProgressTimer();
+        StateHasChanged();
+    }
+
+    private async Task CancelMigration(MigrationJob job)
+    {
+        MigrationQueue.TryCancel(job.Id);
+        Snackbar.Add($"Cancellation requested for {job.SourceEmail}.", Severity.Warning);
+        await LoadData();
+    }
+
+    private static double GetProgressPercent(MigrationJob job)
+    {
+        if (job.TotalMessages == 0) return 0;
+        return (double)job.ProcessedMessages / job.TotalMessages * 100;
+    }
+
+    private void StartProgressTimer()
+    {
+        if (_refreshTimer is not null) return;
+
+        _refreshTimer = new Timer(async _ =>
+        {
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadData();
+                    StateHasChanged();
+
+                    if (!_jobs.Any(j => j.Status == MigrationJobStatus.Running))
+                    {
+                        _refreshTimer?.Dispose();
+                        _refreshTimer = null;
+                    }
+                });
+            }
+            catch (ObjectDisposedException)
+            {
+                // Component disposed during callback
+            }
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+    }
 }

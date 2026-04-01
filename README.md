@@ -22,6 +22,9 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Auto-map for common folders (Inbox, Sent, Drafts, etc.)
 - M365 folder & subfolder creation from within the mapping dialog
 - Validation warnings for unmapped folders containing emails
+- Basic migration engine: IMAP → M365 email migration per folder mapping
+- Background job execution with progress tracking
+- Per-job start/cancel controls with auto-refreshing progress bar
 - Clean admin dashboard with premium UI (thanks MudBlazor)
 
 ## Tech Stack
@@ -39,7 +42,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 
 **Work in progress.** Very much in progress. Like, "the foundation is there but the house has no roof" kind of progress.
 
-Current version: `v0.0.8`
+Current version: `v0.0.9`
 
 The version numbering starts at 0.0.1 because even 1.0 feels too optimistic right now.
 

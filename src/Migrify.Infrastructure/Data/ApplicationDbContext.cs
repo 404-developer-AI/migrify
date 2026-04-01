@@ -44,6 +44,9 @@ public class ApplicationDbContext : IdentityDbContext
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");
 
+            entity.Property(e => e.CurrentFolder).HasMaxLength(500);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
+
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.MigrationJobs)
                 .HasForeignKey(e => e.ProjectId)

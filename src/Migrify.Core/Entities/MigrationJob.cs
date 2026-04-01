@@ -13,6 +13,12 @@ public class MigrationJob
 
     public bool HasImapOverride { get; set; }
 
+    // Migration progress tracking
+    public int TotalMessages { get; set; }
+    public int ProcessedMessages { get; set; }
+    public string? CurrentFolder { get; set; }
+    public string? ErrorMessage { get; set; }
+
     public Project Project { get; set; } = null!;
     public ImapSettings? ImapSettings { get; set; }
     public ICollection<FolderMapping> FolderMappings { get; set; } = new List<FolderMapping>();
