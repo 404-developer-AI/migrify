@@ -13,9 +13,18 @@ public class MigrationJob
 
     public bool HasImapOverride { get; set; }
 
+    // Migration options
+    public DateTime? DateFrom { get; set; }
+    public DateTime? DateTo { get; set; }
+    public bool SkipDuplicates { get; set; } = true;
+    public MigrationMode MigrationMode { get; set; } = MigrationMode.Copy;
+    public bool MigrationOptionsConfigured { get; set; }
+
     // Migration progress tracking
     public int TotalMessages { get; set; }
     public int ProcessedMessages { get; set; }
+    public int SkippedMessages { get; set; }
+    public int DuplicateMessages { get; set; }
     public string? CurrentFolder { get; set; }
     public string? ErrorMessage { get; set; }
 

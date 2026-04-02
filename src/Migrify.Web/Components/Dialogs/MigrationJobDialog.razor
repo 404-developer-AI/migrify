@@ -198,6 +198,50 @@
                     </MudButton>
                 </MudTabPanel>
             }
+
+            <MudTabPanel Text="Migration Options" Icon="@Icons.Material.Filled.Tune">
+                <MudText Typo="Typo.subtitle2" Class="mb-3">Migration Mode</MudText>
+                <MudRadioGroup @bind-Value="_migrationMode">
+                    <MudRadio Value="MigrationMode.Copy" Color="Color.Primary">
+                        Copy — Migrate all messages
+                    </MudRadio>
+                    <MudRadio Value="MigrationMode.Incremental" Color="Color.Primary">
+                        Incremental — Skip messages already in destination
+                    </MudRadio>
+                </MudRadioGroup>
+
+                <MudDivider Class="my-4" />
+
+                <MudText Typo="Typo.subtitle2" Class="mb-3">Date Range Filter</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">
+                    Only migrate emails within this date range. Leave empty to migrate all.
+                    Uses received date (sent date for Sent Items).
+                </MudText>
+                <MudGrid>
+                    <MudItem xs="6">
+                        <MudDatePicker @bind-Date="_dateFrom" Label="From Date" Clearable="true"
+                                       DateFormat="dd-MM-yyyy" Placeholder="No start date" />
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudDatePicker @bind-Date="_dateTo" Label="To Date" Clearable="true"
+                                       DateFormat="dd-MM-yyyy" Placeholder="No end date" />
+                    </MudItem>
+                </MudGrid>
+
+                <MudDivider Class="my-4" />
+
+                <MudText Typo="Typo.subtitle2" Class="mb-3">Duplicate Handling</MudText>
+                <MudSwitch @bind-Value="_skipDuplicates"
+                           Label="Skip duplicate messages (check Message-ID)"
+                           Color="Color.Primary"
+                           Disabled="_migrationMode == MigrationMode.Incremental" />
+                @if (_migrationMode == MigrationMode.Incremental)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2">
+                        Incremental mode always checks for duplicates.
+                    </MudAlert>
+                }
+            </MudTabPanel>
         </MudTabs>
     </DialogContent>
     <DialogActions>
@@ -260,6 +304,12 @@
     private bool _isAuthorizing;
     private DotNetObjectReference<MigrationJobDialog>? _dotNetRef;
 
+    // Migration options
+    private MigrationMode _migrationMode = MigrationMode.Copy;
+    private DateTime? _dateFrom;
+    private DateTime? _dateTo;
+    private bool _skipDuplicates = true;
+
     private bool _isSaving;
 
     protected override void OnParametersSet()
@@ -269,6 +319,12 @@
             _sourceEmail = ExistingJob.SourceEmail;
             _destinationEmail = ExistingJob.DestinationEmail;
             _hasImapOverride = ExistingJob.HasImapOverride;
+
+            // Migration options
+            _migrationMode = ExistingJob.MigrationMode;
+            _dateFrom = ExistingJob.DateFrom;
+            _dateTo = ExistingJob.DateTo;
+            _skipDuplicates = ExistingJob.SkipDuplicates;
 
             if (ExistingJob.ImapSettings is not null)
             {
@@ -537,6 +593,13 @@
                 job.DestinationEmail = _destinationEmail.Trim();
                 job.HasImapOverride = _hasImapOverride;
 
+                // Migration options
+                job.MigrationMode = _migrationMode;
+                job.DateFrom = _dateFrom.HasValue ? DateTime.SpecifyKind(_dateFrom.Value, DateTimeKind.Utc) : null;
+                job.DateTo = _dateTo.HasValue ? DateTime.SpecifyKind(_dateTo.Value, DateTimeKind.Utc) : null;
+                job.SkipDuplicates = _migrationMode == MigrationMode.Incremental ? true : _skipDuplicates;
+                job.MigrationOptionsConfigured = true;
+
                 // IMAP settings (only when IMAP tab is shown)
                 if (_showImapTab && !string.IsNullOrWhiteSpace(_imapHost))
                 {
@@ -580,7 +643,12 @@
                     ProjectId = ProjectId,
                     SourceEmail = _sourceEmail.Trim(),
                     DestinationEmail = _destinationEmail.Trim(),
-                    HasImapOverride = _hasImapOverride
+                    HasImapOverride = _hasImapOverride,
+                    MigrationMode = _migrationMode,
+                    DateFrom = _dateFrom.HasValue ? DateTime.SpecifyKind(_dateFrom.Value, DateTimeKind.Utc) : null,
+                    DateTo = _dateTo.HasValue ? DateTime.SpecifyKind(_dateTo.Value, DateTimeKind.Utc) : null,
+                    SkipDuplicates = _migrationMode == MigrationMode.Incremental ? true : _skipDuplicates,
+                    MigrationOptionsConfigured = true
                 };
 
                 // IMAP settings (only when IMAP tab is shown)

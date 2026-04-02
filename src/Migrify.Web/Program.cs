@@ -40,6 +40,10 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.ExpireTimeSpan = TimeSpan.FromHours(24);
 });
 
+// SignalR
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<Migrify.Core.Interfaces.IMigrationProgressNotifier, Migrify.Web.Services.SignalRMigrationProgressNotifier>();
+
 // MudBlazor
 builder.Services.AddMudServices();
 
@@ -84,6 +88,8 @@ app.UseAntiforgery();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.MapHub<Migrify.Web.Hubs.MigrationProgressHub>("/hubs/migration-progress");
 
 // Login POST endpoint
 app.MapPost("/api/account/login", async (

@@ -10,7 +10,7 @@
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
 @inject IMigrationQueueService MigrationQueue
-@implements IDisposable
+@implements IAsyncDisposable
 
 <PageTitle>@(_project?.Name ?? "Project") - Migrify</PageTitle>
 
@@ -190,6 +190,7 @@ else
                 <MudTh>Destination Email</MudTh>
                 <MudTh>Source Auth</MudTh>
                 <MudTh>Mapping</MudTh>
+                <MudTh>Options</MudTh>
                 <MudTh>Status</MudTh>
                 <MudTh>Created</MudTh>
                 <MudTh Style="width: 220px;">Actions</MudTh>
@@ -237,6 +238,26 @@ else
                         <MudText Typo="Typo.body2" Color="Color.Secondary">Not mapped</MudText>
                     }
                 </MudTd>
+                <MudTd DataLabel="Options">
+                    @if (context.MigrationOptionsConfigured)
+                    {
+                        <MudTooltip Text="@GetOptionsTooltip(context)">
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(context.MigrationMode == MigrationMode.Incremental ? Color.Info : Color.Success)"
+                                     Variant="Variant.Outlined">
+                                @(context.MigrationMode == MigrationMode.Incremental ? "Incremental" : "Full Copy")@(context.DateFrom.HasValue || context.DateTo.HasValue ? " *" : "")
+                            </MudChip>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <MudTooltip Text="Migration options must be configured before starting">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                                Not configured
+                            </MudChip>
+                        </MudTooltip>
+                    }
+                </MudTd>
                 <MudTd DataLabel="Status">
                     @if (context.Status == MigrationJobStatus.Completed && !string.IsNullOrEmpty(context.ErrorMessage))
                     {
@@ -258,6 +279,10 @@ else
                                            Class="mt-1" Rounded="true" Size="Size.Small" />
                         <MudText Typo="Typo.caption" Color="Color.Secondary">
                             @context.ProcessedMessages / @context.TotalMessages
+                            @if (context.DuplicateMessages > 0)
+                            {
+                                <span> (@context.DuplicateMessages already present)</span>
+                            }
                             @if (!string.IsNullOrEmpty(context.CurrentFolder))
                             {
                                 <span> — @context.CurrentFolder</span>
@@ -297,11 +322,12 @@ else
                                            OnClick="@(() => OpenFolderMappingDialog(context))" />
                         </MudTooltip>
                     }
-                    @if (CanStartMigration(context))
+                    @if (context.Status != MigrationJobStatus.Running)
                     {
-                        <MudTooltip Text="Start Migration">
+                        <MudTooltip Text="@GetStartBlockReason(context)">
                             <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small"
                                            Color="Color.Success"
+                                           Disabled="@(!CanStartMigration(context))"
                                            OnClick="@(() => StartMigration(context))" />
                         </MudTooltip>
                     }
@@ -342,14 +368,55 @@ else
     private int _destMailboxCount;
     private bool _isDiscoveringSource;
     private bool _isDiscoveringDest;
-    private Timer? _refreshTimer;
+    private HubConnection? _hubConnection;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadData();
+        await SetupSignalR();
+    }
 
-        if (_jobs.Any(j => j.Status == MigrationJobStatus.Running))
-            StartProgressTimer();
+    private async Task SetupSignalR()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/migration-progress"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<Guid, int, int, string?, int, int>("ReceiveProgress", (jobId, processed, total, currentFolder, skipped, duplicates) =>
+        {
+            var job = _jobs.FirstOrDefault(j => j.Id == jobId);
+            if (job is not null)
+            {
+                job.ProcessedMessages = processed;
+                job.TotalMessages = total;
+                job.CurrentFolder = currentFolder;
+                job.SkippedMessages = skipped;
+                job.DuplicateMessages = duplicates;
+                InvokeAsync(StateHasChanged);
+            }
+        });
+
+        _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadData();
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadData();
+                StateHasChanged();
+            });
+        });
+
+        await _hubConnection.StartAsync();
+        await _hubConnection.InvokeAsync("JoinProject", ProjectId);
     }
 
     private async Task LoadData()
@@ -617,11 +684,40 @@ else
     private bool CanStartMigration(MigrationJob job)
     {
         return job.FolderMappings.Any()
-            && job.Status is MigrationJobStatus.New or MigrationJobStatus.Ready
+            && job.MigrationOptionsConfigured
+            && (job.Status is MigrationJobStatus.New or MigrationJobStatus.Ready
                 or MigrationJobStatus.Failed or MigrationJobStatus.Cancelled
+                or MigrationJobStatus.Completed)
             && HasSourceAccess(job)
             && _project?.M365Settings is not null
             && !string.IsNullOrEmpty(_project.M365Settings.TenantId);
+    }
+
+    private static string GetOptionsTooltip(MigrationJob job)
+    {
+        var parts = new List<string>();
+        parts.Add(job.MigrationMode == MigrationMode.Incremental ? "Incremental (skip duplicates)" : "Full Copy");
+        parts.Add(job.SkipDuplicates ? "Duplicate check: on" : "Duplicate check: off");
+        if (job.DateFrom.HasValue && job.DateTo.HasValue)
+            parts.Add($"Date range: {job.DateFrom.Value:dd-MM-yyyy} — {job.DateTo.Value:dd-MM-yyyy}");
+        else if (job.DateFrom.HasValue)
+            parts.Add($"From: {job.DateFrom.Value:dd-MM-yyyy}");
+        else if (job.DateTo.HasValue)
+            parts.Add($"Until: {job.DateTo.Value:dd-MM-yyyy}");
+        return string.Join(" | ", parts);
+    }
+
+    private string GetStartBlockReason(MigrationJob job)
+    {
+        if (CanStartMigration(job)) return "Start Migration";
+        if (!job.FolderMappings.Any()) return "No folder mappings configured";
+        if (!job.MigrationOptionsConfigured) return "Migration options not configured";
+        if (job.Status == MigrationJobStatus.Running) return "Migration is running";
+        if (job.Status == MigrationJobStatus.Paused) return "Migration is paused";
+        if (!HasSourceAccess(job)) return "Source access not configured";
+        if (_project?.M365Settings is null || string.IsNullOrEmpty(_project.M365Settings.TenantId))
+            return "M365 destination not configured";
+        return "Cannot start migration";
     }
 
     private async Task StartMigration(MigrationJob job)
@@ -630,13 +726,14 @@ else
         job.Status = MigrationJobStatus.Running;
         job.ProcessedMessages = 0;
         job.TotalMessages = 0;
+        job.SkippedMessages = 0;
+        job.DuplicateMessages = 0;
         job.ErrorMessage = null;
         job.CurrentFolder = "Starting...";
         await JobRepository.UpdateAsync(job);
 
         await MigrationQueue.EnqueueAsync(job.Id);
         Snackbar.Add($"Migration started for {job.SourceEmail}.", Severity.Success);
-        StartProgressTimer();
         StateHasChanged();
     }
 
@@ -653,35 +750,18 @@ else
         return (double)job.ProcessedMessages / job.TotalMessages * 100;
     }
 
-    private void StartProgressTimer()
+    public async ValueTask DisposeAsync()
     {
-        if (_refreshTimer is not null) return;
-
-        _refreshTimer = new Timer(async _ =>
+        if (_hubConnection is not null)
         {
             try
             {
-                await InvokeAsync(async () =>
-                {
-                    await LoadData();
-                    StateHasChanged();
-
-                    if (!_jobs.Any(j => j.Status == MigrationJobStatus.Running))
-                    {
-                        _refreshTimer?.Dispose();
-                        _refreshTimer = null;
-                    }
-                });
+                await _hubConnection.DisposeAsync();
             }
-            catch (ObjectDisposedException)
+            catch
             {
-                // Component disposed during callback
+                // Connection may already be closed
             }
-        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
-    }
-
-    public void Dispose()
-    {
-        _refreshTimer?.Dispose();
+        }
     }
 }

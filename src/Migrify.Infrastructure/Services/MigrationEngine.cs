@@ -17,19 +17,24 @@ public class MigrationEngine : IMigrationEngine
     private readonly IMigrationJobRepository _jobRepository;
     private readonly ICredentialEncryptor _encryptor;
     private readonly IImapOAuthCredentialProvider _oauthProvider;
+    private readonly IMigrationProgressNotifier _progressNotifier;
     private readonly ILogger<MigrationEngine> _logger;
 
     private const int MaxMimeSize = 4 * 1024 * 1024; // 4MB Graph API limit for direct upload
+    private const int DbPersistInterval = 10; // Persist to DB every N messages
+    private static readonly TimeSpan RateLimitDelay = TimeSpan.FromMilliseconds(150); // ~7 msg/sec with duplicate check
 
     public MigrationEngine(
         IMigrationJobRepository jobRepository,
         ICredentialEncryptor encryptor,
         IImapOAuthCredentialProvider oauthProvider,
+        IMigrationProgressNotifier progressNotifier,
         ILogger<MigrationEngine> logger)
     {
         _jobRepository = jobRepository;
         _encryptor = encryptor;
         _oauthProvider = oauthProvider;
+        _progressNotifier = progressNotifier;
         _logger = logger;
     }
 
@@ -56,13 +61,19 @@ public class MigrationEngine : IMigrationEngine
                 return;
             }
 
+            // Incremental mode always forces duplicate checking
+            bool checkDuplicates = job.SkipDuplicates || job.MigrationMode == MigrationMode.Incremental;
+
             // Set status to Running
             job.Status = MigrationJobStatus.Running;
             job.ProcessedMessages = 0;
             job.TotalMessages = 0;
+            job.SkippedMessages = 0;
+            job.DuplicateMessages = 0;
             job.CurrentFolder = null;
             job.ErrorMessage = null;
             await _jobRepository.UpdateAsync(job);
+            await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, job.Status.ToString(), null);
 
             // Decrypt M365 credentials
             var m365 = project.M365Settings!;
@@ -77,14 +88,15 @@ public class MigrationEngine : IMigrationEngine
             httpClient.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.Token);
 
-            // Count total messages across all mapped folders
+            // Count total messages across all mapped folders (with date filtering)
             var mappings = job.FolderMappings.OrderBy(m => m.SourceFolderName).ToList();
-            var folderMessageCounts = await CountMessagesPerFolder(job, project, mappings, cancellationToken);
+            var folderMessageUids = await GetFilteredMessageUids(job, project, mappings, cancellationToken);
 
-            job.TotalMessages = folderMessageCounts.Values.Sum();
+            job.TotalMessages = folderMessageUids.Values.Sum(uids => uids.Count);
             await _jobRepository.UpdateAsync(job);
+            await _progressNotifier.SendProgressAsync(project.Id, job.Id, 0, job.TotalMessages, null, 0, 0);
 
-            _logger.LogInformation("Job {JobId}: {TotalMessages} messages across {FolderCount} folders",
+            _logger.LogInformation("Job {JobId}: {TotalMessages} messages across {FolderCount} folders (after date filtering)",
                 jobId, job.TotalMessages, mappings.Count);
 
             if (job.TotalMessages == 0)
@@ -92,30 +104,32 @@ public class MigrationEngine : IMigrationEngine
                 job.Status = MigrationJobStatus.Completed;
                 job.CurrentFolder = null;
                 await _jobRepository.UpdateAsync(job);
+                await _progressNotifier.SendJobCompletedAsync(project.Id, job.Id, 0, 0, 0, 0, null);
                 _logger.LogInformation("Job {JobId}: No messages to migrate, completed", jobId);
                 return;
             }
 
             // Migrate each folder
             int skippedMessages = 0;
+            int duplicateMessages = 0;
             int failedMessages = 0;
 
             foreach (var mapping in mappings)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                var uids = folderMessageUids.GetValueOrDefault(mapping.SourceFolderName);
+                if (uids is null || uids.Count == 0)
+                {
+                    _logger.LogDebug("Job {JobId}: Folder '{Folder}' has no matching messages, skipping", jobId, mapping.SourceFolderName);
+                    continue;
+                }
+
                 job.CurrentFolder = mapping.SourceFolderName;
                 await _jobRepository.UpdateAsync(job);
 
-                _logger.LogInformation("Job {JobId}: Migrating folder '{Folder}' → '{DestFolder}'",
-                    jobId, mapping.SourceFolderName, mapping.DestinationFolderDisplayName);
-
-                var messageCount = folderMessageCounts.GetValueOrDefault(mapping.SourceFolderName, 0);
-                if (messageCount == 0)
-                {
-                    _logger.LogDebug("Job {JobId}: Folder '{Folder}' is empty, skipping", jobId, mapping.SourceFolderName);
-                    continue;
-                }
+                _logger.LogInformation("Job {JobId}: Migrating folder '{Folder}' → '{DestFolder}' ({Count} messages)",
+                    jobId, mapping.SourceFolderName, mapping.DestinationFolderDisplayName, uids.Count);
 
                 // Connect to IMAP and migrate messages
                 using var imapClient = CreateImapClient();
@@ -126,12 +140,17 @@ public class MigrationEngine : IMigrationEngine
                     var folder = await imapClient.GetFolderAsync(mapping.SourceFolderName, cancellationToken);
                     await folder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
-                    for (int i = 0; i < folder.Count; i++)
+                    bool isSentFolder = IsSentFolder(mapping.SourceFolderName);
+
+                    foreach (var uid in uids)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
                         try
                         {
+                            // Rate limiting to respect Graph API limits
+                            await Task.Delay(RateLimitDelay, cancellationToken);
+
                             // Refresh token if needed (tokens expire after ~1 hour)
                             if (token.ExpiresOn <= DateTimeOffset.UtcNow.AddMinutes(5))
                             {
@@ -140,7 +159,34 @@ public class MigrationEngine : IMigrationEngine
                                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.Token);
                             }
 
-                            var message = await folder.GetMessageAsync(i, cancellationToken);
+                            var message = await folder.GetMessageAsync(uid, cancellationToken);
+
+                            // Post-fetch date filter for Sent Items (IMAP SEARCH uses InternalDate, but Sent Items should use Date header)
+                            if (isSentFolder && !PassesDateFilter(message.Date, job.DateFrom, job.DateTo))
+                            {
+                                skippedMessages++;
+                                job.ProcessedMessages++;
+                                job.SkippedMessages = skippedMessages;
+                                await SendProgressAndPersist(job, project.Id, skippedMessages);
+                                continue;
+                            }
+
+                            // Duplicate check via Graph API
+                            if (checkDuplicates && !string.IsNullOrEmpty(message.MessageId))
+                            {
+                                var isDuplicate = await CheckDuplicateAsync(httpClient, job.DestinationEmail,
+                                    mapping.DestinationFolderId, message.MessageId, cancellationToken);
+                                if (isDuplicate)
+                                {
+                                    _logger.LogDebug("Job {JobId}: Already present '{Subject}' (Message-ID: {MessageId})",
+                                        jobId, message.Subject, message.MessageId);
+                                    duplicateMessages++;
+                                    job.ProcessedMessages++;
+                                    job.DuplicateMessages = duplicateMessages;
+                                    await SendProgressAndPersist(job, project.Id, skippedMessages);
+                                    continue;
+                                }
+                            }
 
                             using var mimeStream = new MemoryStream();
                             await message.WriteToAsync(mimeStream, cancellationToken);
@@ -151,7 +197,8 @@ public class MigrationEngine : IMigrationEngine
                                     jobId, message.Subject, mapping.SourceFolderName, mimeStream.Length / (1024.0 * 1024.0));
                                 skippedMessages++;
                                 job.ProcessedMessages++;
-                                await _jobRepository.UpdateAsync(job);
+                                job.SkippedMessages = skippedMessages;
+                                await SendProgressAndPersist(job, project.Id, skippedMessages);
                                 continue;
                             }
 
@@ -159,8 +206,8 @@ public class MigrationEngine : IMigrationEngine
                             var graphMessage = ConvertToGraphMessage(message);
                             var uploadUrl = $"https://graph.microsoft.com/v1.0/users/{Uri.EscapeDataString(job.DestinationEmail)}/mailFolders/{mapping.DestinationFolderId}/messages";
 
-                            _logger.LogInformation("Job {JobId}: Uploading message {Index}/{Total} '{Subject}' to '{DestFolder}'",
-                                jobId, i + 1, folder.Count, message.Subject, mapping.DestinationFolderDisplayName);
+                            _logger.LogDebug("Job {JobId}: Uploading '{Subject}' to '{DestFolder}'",
+                                jobId, message.Subject, mapping.DestinationFolderDisplayName);
 
                             var jsonPayload = System.Text.Json.JsonSerializer.Serialize(graphMessage);
                             using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
@@ -187,11 +234,6 @@ public class MigrationEngine : IMigrationEngine
                                         failedMessages--;
                                 }
                             }
-                            else
-                            {
-                                _logger.LogInformation("Job {JobId}: Successfully migrated '{Subject}' → '{DestFolder}'",
-                                    jobId, message.Subject, mapping.DestinationFolderDisplayName);
-                            }
                         }
                         catch (OperationCanceledException)
                         {
@@ -199,13 +241,14 @@ public class MigrationEngine : IMigrationEngine
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Job {JobId}: Error processing message {Index} in '{Folder}'",
-                                jobId, i, mapping.SourceFolderName);
+                            _logger.LogWarning(ex, "Job {JobId}: Error processing message {Uid} in '{Folder}'",
+                                jobId, uid, mapping.SourceFolderName);
                             failedMessages++;
                         }
 
                         job.ProcessedMessages++;
-                        await _jobRepository.UpdateAsync(job);
+                        job.SkippedMessages = skippedMessages;
+                        await SendProgressAndPersist(job, project.Id, skippedMessages);
                     }
 
                     await folder.CloseAsync(false, cancellationToken);
@@ -235,21 +278,27 @@ public class MigrationEngine : IMigrationEngine
             // Completed
             job.Status = MigrationJobStatus.Completed;
             job.CurrentFolder = null;
+            job.SkippedMessages = skippedMessages;
+            job.DuplicateMessages = duplicateMessages;
 
+            // Only failed and skipped (>4MB/date) count as warnings — duplicates are normal
             if (skippedMessages > 0 || failedMessages > 0)
             {
-                job.ErrorMessage = $"Completed with {failedMessages} failed and {skippedMessages} skipped (>4MB) messages.";
+                job.ErrorMessage = $"Completed with {failedMessages} failed and {skippedMessages} skipped messages.";
             }
 
             await _jobRepository.UpdateAsync(job);
-            _logger.LogInformation("Job {JobId}: Migration completed. {Processed}/{Total} messages. {Failed} failed, {Skipped} skipped.",
-                jobId, job.ProcessedMessages, job.TotalMessages, failedMessages, skippedMessages);
+            await _progressNotifier.SendJobCompletedAsync(project.Id, job.Id,
+                job.ProcessedMessages, job.TotalMessages, failedMessages, skippedMessages, job.ErrorMessage);
+            _logger.LogInformation("Job {JobId}: Migration completed. {Processed}/{Total} messages. {Failed} failed, {Skipped} skipped, {Duplicates} already present.",
+                jobId, job.ProcessedMessages, job.TotalMessages, failedMessages, skippedMessages, duplicateMessages);
         }
         catch (OperationCanceledException)
         {
             job.Status = MigrationJobStatus.Cancelled;
             job.CurrentFolder = null;
             await _jobRepository.UpdateAsync(job);
+            await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, job.Status.ToString(), null);
             _logger.LogInformation("Job {JobId}: Migration cancelled at {Processed}/{Total} messages",
                 jobId, job.ProcessedMessages, job.TotalMessages);
         }
@@ -257,6 +306,64 @@ public class MigrationEngine : IMigrationEngine
         {
             _logger.LogError(ex, "Job {JobId}: Migration failed", jobId);
             await SetJobFailed(job, ex.Message);
+            await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, MigrationJobStatus.Failed.ToString(), ex.Message);
+        }
+    }
+
+    private async Task SendProgressAndPersist(MigrationJob job, Guid projectId, int skipped)
+    {
+        await _progressNotifier.SendProgressAsync(projectId, job.Id,
+            job.ProcessedMessages, job.TotalMessages, job.CurrentFolder, skipped, job.DuplicateMessages);
+
+        // Persist to DB periodically to reduce DB load
+        if (job.ProcessedMessages % DbPersistInterval == 0)
+            await _jobRepository.UpdateAsync(job);
+    }
+
+    private static bool IsSentFolder(string folderName)
+    {
+        return folderName.Contains("Sent", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool PassesDateFilter(DateTimeOffset messageDate, DateTime? dateFrom, DateTime? dateTo)
+    {
+        if (messageDate == DateTimeOffset.MinValue)
+            return true; // No date available, don't filter
+
+        var date = messageDate.UtcDateTime;
+        if (dateFrom.HasValue && date < dateFrom.Value.Date)
+            return false;
+        if (dateTo.HasValue && date > dateTo.Value.Date.AddDays(1).AddTicks(-1))
+            return false;
+        return true;
+    }
+
+    private async Task<bool> CheckDuplicateAsync(HttpClient httpClient, string destEmail,
+        string destFolderId, string messageId, CancellationToken ct)
+    {
+        try
+        {
+            // Escape the Message-ID for OData filter (encode angle brackets and single quotes)
+            var escapedId = messageId.Replace("'", "''");
+            var filterUrl = $"https://graph.microsoft.com/v1.0/users/{Uri.EscapeDataString(destEmail)}" +
+                            $"/mailFolders/{destFolderId}/messages" +
+                            $"?$filter=internetMessageId eq '{Uri.EscapeDataString(escapedId)}'&$select=id&$top=1";
+
+            var response = await httpClient.GetAsync(filterUrl, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("Duplicate check failed for Message-ID {MessageId}: {Status}", messageId, response.StatusCode);
+                return false; // On error, assume not duplicate (upload anyway)
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            // Check if the response contains any results
+            return json.Contains("\"id\"", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Duplicate check error for Message-ID {MessageId}", messageId);
+            return false; // On error, assume not duplicate
         }
     }
 
@@ -361,6 +468,9 @@ public class MigrationEngine : IMigrationEngine
 
     private string? ValidatePreconditions(MigrationJob job, Project project)
     {
+        if (!job.MigrationOptionsConfigured)
+            return "Migration options not configured.";
+
         if (!job.FolderMappings.Any())
             return "No folder mappings configured.";
 
@@ -392,10 +502,14 @@ public class MigrationEngine : IMigrationEngine
         return null;
     }
 
-    private async Task<Dictionary<string, int>> CountMessagesPerFolder(
+    /// <summary>
+    /// Gets UIDs of messages per folder, applying date range filtering via IMAP SEARCH
+    /// to avoid downloading messages that will be skipped.
+    /// </summary>
+    private async Task<Dictionary<string, IList<UniqueId>>> GetFilteredMessageUids(
         MigrationJob job, Project project, List<FolderMapping> mappings, CancellationToken ct)
     {
-        var counts = new Dictionary<string, int>();
+        var result = new Dictionary<string, IList<UniqueId>>();
 
         using var client = CreateImapClient();
         await ConnectAndAuthenticate(client, job, project, ct);
@@ -406,18 +520,53 @@ public class MigrationEngine : IMigrationEngine
             {
                 var folder = await client.GetFolderAsync(mapping.SourceFolderName, ct);
                 await folder.OpenAsync(FolderAccess.ReadOnly, ct);
-                counts[mapping.SourceFolderName] = folder.Count;
+
+                // Build IMAP SEARCH query with date range (uses InternalDate)
+                var searchQuery = BuildDateSearchQuery(job.DateFrom, job.DateTo);
+
+                IList<UniqueId> uids;
+                if (searchQuery is not null)
+                {
+                    uids = await folder.SearchAsync(searchQuery, ct);
+                }
+                else
+                {
+                    // No date filter: get all UIDs
+                    uids = await folder.SearchAsync(MailKit.Search.SearchQuery.All, ct);
+                }
+
+                result[mapping.SourceFolderName] = uids;
                 await folder.CloseAsync(false, ct);
+
+                _logger.LogDebug("Folder '{Folder}': {Count} messages match date filter", mapping.SourceFolderName, uids.Count);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not count messages in folder '{Folder}'", mapping.SourceFolderName);
-                counts[mapping.SourceFolderName] = 0;
+                _logger.LogWarning(ex, "Could not search messages in folder '{Folder}'", mapping.SourceFolderName);
+                result[mapping.SourceFolderName] = Array.Empty<UniqueId>();
             }
         }
 
         await client.DisconnectAsync(true, ct);
-        return counts;
+        return result;
+    }
+
+    private static MailKit.Search.SearchQuery? BuildDateSearchQuery(DateTime? dateFrom, DateTime? dateTo)
+    {
+        MailKit.Search.SearchQuery? query = null;
+
+        if (dateFrom.HasValue)
+        {
+            query = MailKit.Search.SearchQuery.DeliveredAfter(dateFrom.Value.Date.AddDays(-1));
+        }
+
+        if (dateTo.HasValue)
+        {
+            var beforeQuery = MailKit.Search.SearchQuery.DeliveredBefore(dateTo.Value.Date.AddDays(1));
+            query = query is not null ? query.And(beforeQuery) : beforeQuery;
+        }
+
+        return query;
     }
 
     private async Task ConnectAndAuthenticate(ImapClient client, MigrationJob job, Project project, CancellationToken ct)
@@ -478,7 +627,7 @@ public class MigrationEngine : IMigrationEngine
             var ipv4 = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
                 ?? throw new InvalidOperationException($"No IPv4 address found for {host}");
 
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             await socket.ConnectAsync(ipv4, port, ct);
             await client.ConnectAsync(socket, host, port, socketOptions, ct);
         }
