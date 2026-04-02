@@ -7,7 +7,7 @@
 
 ## What does it do?
 
-Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's self-hosted mail server from 2003) to Microsoft 365 Exchange Online.
+Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's self-hosted mail server from 2003) to Microsoft 365 Exchange Online. And yes — it actually works now. Emails go in on one side and come out on the other. Most of the time.
 
 **Features so far:**
 - Project-based migration management with connector model (source + destination per project)
@@ -24,7 +24,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Validation warnings for unmapped folders containing emails
 - Migration engine: IMAP → M365 email migration per folder mapping
 - Real-time progress tracking via SignalR (live progress bar, status, folder updates)
-- Job options: date range filter, duplicate detection (Message-ID), copy/incremental mode
+- Job options: date range filter, duplicate detection (Message-ID), full copy & incremental mode
 - Rate limiting for Graph API compliance (10K req/10min)
 - Memory-efficient streaming with IMAP SEARCH-based date filtering
 - Per-job start/cancel controls with live progress updates
@@ -39,11 +39,12 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 | Database | PostgreSQL + Entity Framework Core |
 | IMAP | MailKit |
 | M365 | Microsoft Graph SDK |
+| Real-time | SignalR |
 | Deployment | Docker + Nginx |
 
 ## Status
 
-**Work in progress.** Very much in progress. Like, "the foundation is there but the house has no roof" kind of progress.
+**Work in progress.** But the kind of progress where emails actually migrate now. The foundation is there, the walls are up, and the roof is... getting there. Still wouldn't host a dinner party though.
 
 Current version: `v0.0.10`
 
@@ -51,11 +52,11 @@ The version numbering starts at 0.0.1 because even 1.0 feels too optimistic righ
 
 ## Can I use this?
 
-Technically? Yes. Should you trust your production mailboxes to software built by someone who learned what a `DbContext` is last week? That's between you and your backup strategy.
+Technically? Yes. Small migrations are actually working. Should you trust your 50,000-email production mailbox to software built by someone who learned what a `DbContext` is last week? That's between you and your backup strategy.
 
 ## Roadmap
 
-There is one. It's ambitious. It involves actual email migration at some point. Stay tuned.
+There is one. It's ambitious. It currently involves logging, retry logic, parallel migrations, and eventually Docker deployment. The email migration part? That's actually done. Wild.
 
 ## License
 
