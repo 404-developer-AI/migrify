@@ -5,7 +5,7 @@
 ### Microsoft Graph API (Mail Operations)
 | Limit | Value |
 |-------|-------|
-| Requests per 10 minutes | 10,000 per app + mailbox |
+| Requests per 10 minutes | 10,000 per app per tenant |
 | Safe sustained rate | ~14 requests/second |
 | Mailbox concurrency (batch) | 4 concurrent requests per mailbox |
 | Throttling response | HTTP 429 with Retry-After header |
@@ -58,7 +58,7 @@
 | 5-10 jobs | 2-4 GB | Medium workload |
 | 10+ jobs | 4+ GB | Large-scale migrations |
 
-> **Note:** Current architecture (v0.0.10) processes jobs sequentially (single BackgroundService). Parallel job support is planned for v0.0.14. Memory estimates for multiple jobs are for future reference.
+> **Note:** Since v0.0.14, jobs run in parallel with smart concurrency limits. The system automatically calculates the max concurrent jobs based on available RAM (250 MB/job, 512 MB reserved for OS+app). Manual override is available via Settings page.
 
 ### CPU
 - Migration is primarily I/O-bound (network: IMAP download + Graph API upload)
@@ -101,7 +101,38 @@ Assumes:
 - Average message size ~200 KB
 - No throttling events (HTTP 429)
 - Stable network connection
-- Sequential processing (1 job at a time)
+- Single job (multiply throughput by concurrent jobs, max 2 per M365 tenant)
+
+---
+
+## Concurrency Limits (v0.0.14b)
+
+Migrify enforces a 3-layer concurrency limit model. The lowest limit across all three layers determines how many jobs can run simultaneously.
+
+### Layer 1: System (global)
+| Resource | Calculation |
+|----------|-------------|
+| Memory | (Total RAM - 512 MB) / 250 MB per job |
+| CPU | Processor count × 3 (I/O-bound) |
+| **Effective** | **min(memory, CPU)** |
+
+### Layer 2: Destination (per M365 tenant)
+| Limit | Value | Reason |
+|-------|-------|--------|
+| Max concurrent jobs per tenant | 2 | 10K req/10min shared across all jobs using same ClientId; each job uses ~4,200 req/10min at 150ms rate |
+
+### Layer 3: Source (per IMAP server / Google domain)
+| Provider | Max Concurrent Jobs |
+|----------|-------------------|
+| Gmail / Google Workspace | 15 |
+| Outlook.com | 10 |
+| iCloud | 10 |
+| Fastmail | 10 |
+| Yahoo | 5 |
+| Zoho | 5 |
+| Unknown IMAP servers | 3 (conservative default) |
+
+All limits can be manually overridden via the Settings page (with safety warnings when exceeding calculated limits).
 
 ---
 
