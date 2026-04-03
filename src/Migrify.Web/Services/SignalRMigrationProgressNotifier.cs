@@ -44,4 +44,10 @@ public class SignalRMigrationProgressNotifier : IMigrationProgressNotifier
         await _hubContext.Clients.Group($"project-{projectId}")
             .SendAsync("ReceiveJobCompleted", jobId, processed, total, failed, skipped, errorMessage);
     }
+
+    public async Task SendLogEntryAsync(Guid projectId, Guid jobId, string type, string? subject, string? sourceFolder, string? errorMessage)
+    {
+        await _hubContext.Clients.Group($"project-{projectId}")
+            .SendAsync("ReceiveLogEntry", jobId, type, subject, sourceFolder, errorMessage);
+    }
 }

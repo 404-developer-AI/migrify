@@ -15,6 +15,7 @@ namespace Migrify.Infrastructure.Services;
 public class MigrationEngine : IMigrationEngine
 {
     private readonly IMigrationJobRepository _jobRepository;
+    private readonly IMigrationLogRepository _logRepository;
     private readonly ICredentialEncryptor _encryptor;
     private readonly IImapOAuthCredentialProvider _oauthProvider;
     private readonly IMigrationProgressNotifier _progressNotifier;
@@ -26,12 +27,14 @@ public class MigrationEngine : IMigrationEngine
 
     public MigrationEngine(
         IMigrationJobRepository jobRepository,
+        IMigrationLogRepository logRepository,
         ICredentialEncryptor encryptor,
         IImapOAuthCredentialProvider oauthProvider,
         IMigrationProgressNotifier progressNotifier,
         ILogger<MigrationEngine> logger)
     {
         _jobRepository = jobRepository;
+        _logRepository = logRepository;
         _encryptor = encryptor;
         _oauthProvider = oauthProvider;
         _progressNotifier = progressNotifier;
@@ -50,6 +53,8 @@ public class MigrationEngine : IMigrationEngine
         var project = job.Project;
         _logger.LogInformation("Starting migration for job {JobId}: {Source} → {Dest}",
             jobId, job.SourceEmail, job.DestinationEmail);
+
+        var logBuffer = new List<MigrationLog>();
 
         try
         {
@@ -165,9 +170,19 @@ public class MigrationEngine : IMigrationEngine
                             if (isSentFolder && !PassesDateFilter(message.Date, job.DateFrom, job.DateTo))
                             {
                                 skippedMessages++;
+                                logBuffer.Add(new MigrationLog
+                                {
+                                    MigrationJobId = job.Id,
+                                    Type = MigrationLogType.Skipped,
+                                    Subject = message.Subject,
+                                    MessageDate = message.Date != DateTimeOffset.MinValue ? message.Date.UtcDateTime : null,
+                                    SourceFolder = mapping.SourceFolderName,
+                                    ErrorMessage = "Outside date filter range"
+                                });
+                                await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Skipped", message.Subject, mapping.SourceFolderName, "Outside date filter range");
                                 job.ProcessedMessages++;
                                 job.SkippedMessages = skippedMessages;
-                                await SendProgressAndPersist(job, project.Id, skippedMessages);
+                                await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer);
                                 continue;
                             }
 
@@ -183,7 +198,7 @@ public class MigrationEngine : IMigrationEngine
                                     duplicateMessages++;
                                     job.ProcessedMessages++;
                                     job.DuplicateMessages = duplicateMessages;
-                                    await SendProgressAndPersist(job, project.Id, skippedMessages);
+                                    await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer);
                                     continue;
                                 }
                             }
@@ -193,12 +208,23 @@ public class MigrationEngine : IMigrationEngine
 
                             if (mimeStream.Length > MaxMimeSize)
                             {
+                                var sizeMb = mimeStream.Length / (1024.0 * 1024.0);
                                 _logger.LogWarning("Job {JobId}: Skipping message '{Subject}' in '{Folder}' — size {Size}MB exceeds 4MB limit",
-                                    jobId, message.Subject, mapping.SourceFolderName, mimeStream.Length / (1024.0 * 1024.0));
+                                    jobId, message.Subject, mapping.SourceFolderName, sizeMb);
                                 skippedMessages++;
+                                logBuffer.Add(new MigrationLog
+                                {
+                                    MigrationJobId = job.Id,
+                                    Type = MigrationLogType.Skipped,
+                                    Subject = message.Subject,
+                                    MessageDate = message.Date != DateTimeOffset.MinValue ? message.Date.UtcDateTime : null,
+                                    SourceFolder = mapping.SourceFolderName,
+                                    ErrorMessage = $"Size {sizeMb:F1}MB exceeds 4MB limit"
+                                });
+                                await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Skipped", message.Subject, mapping.SourceFolderName, $"Size {sizeMb:F1}MB exceeds 4MB limit");
                                 job.ProcessedMessages++;
                                 job.SkippedMessages = skippedMessages;
-                                await SendProgressAndPersist(job, project.Id, skippedMessages);
+                                await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer);
                                 continue;
                             }
 
@@ -217,9 +243,20 @@ public class MigrationEngine : IMigrationEngine
                             if (!response.IsSuccessStatusCode)
                             {
                                 var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                                _logger.LogWarning("Job {JobId}: Failed to upload message '{Subject}' to '{DestFolder}' — {StatusCode}: {Error}",
-                                    jobId, message.Subject, mapping.DestinationFolderDisplayName, response.StatusCode, responseBody[..Math.Min(500, responseBody.Length)]);
+                                var errorDetail = $"{response.StatusCode}: {responseBody[..Math.Min(500, responseBody.Length)]}";
+                                _logger.LogWarning("Job {JobId}: Failed to upload message '{Subject}' to '{DestFolder}' — {Error}",
+                                    jobId, message.Subject, mapping.DestinationFolderDisplayName, errorDetail);
                                 failedMessages++;
+                                logBuffer.Add(new MigrationLog
+                                {
+                                    MigrationJobId = job.Id,
+                                    Type = MigrationLogType.Error,
+                                    Subject = message.Subject,
+                                    MessageDate = message.Date != DateTimeOffset.MinValue ? message.Date.UtcDateTime : null,
+                                    SourceFolder = mapping.SourceFolderName,
+                                    ErrorMessage = errorDetail.Length > 2000 ? errorDetail[..2000] : errorDetail
+                                });
+                                await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Error", message.Subject, mapping.SourceFolderName, response.StatusCode.ToString());
 
                                 // Handle rate limiting
                                 if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
@@ -231,7 +268,10 @@ public class MigrationEngine : IMigrationEngine
                                     using var retryContent = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
                                     response = await httpClient.PostAsync(uploadUrl, retryContent, cancellationToken);
                                     if (response.IsSuccessStatusCode)
+                                    {
                                         failedMessages--;
+                                        logBuffer.RemoveAt(logBuffer.Count - 1); // Remove the error entry since retry succeeded
+                                    }
                                 }
                             }
                         }
@@ -244,11 +284,20 @@ public class MigrationEngine : IMigrationEngine
                             _logger.LogWarning(ex, "Job {JobId}: Error processing message {Uid} in '{Folder}'",
                                 jobId, uid, mapping.SourceFolderName);
                             failedMessages++;
+                            var errorMsg = ex.Message.Length > 2000 ? ex.Message[..2000] : ex.Message;
+                            logBuffer.Add(new MigrationLog
+                            {
+                                MigrationJobId = job.Id,
+                                Type = MigrationLogType.Error,
+                                SourceFolder = mapping.SourceFolderName,
+                                ErrorMessage = errorMsg
+                            });
+                            await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Error", null, mapping.SourceFolderName, errorMsg);
                         }
 
                         job.ProcessedMessages++;
                         job.SkippedMessages = skippedMessages;
-                        await SendProgressAndPersist(job, project.Id, skippedMessages);
+                        await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer);
                     }
 
                     await folder.CloseAsync(false, cancellationToken);
@@ -275,6 +324,24 @@ public class MigrationEngine : IMigrationEngine
                 }
             }
 
+            // Flush remaining log buffer
+            if (logBuffer.Count > 0)
+            {
+                await _logRepository.CreateBatchAsync(logBuffer);
+                logBuffer.Clear();
+            }
+
+            // Write summary log entry
+            await _logRepository.CreateAsync(new MigrationLog
+            {
+                MigrationJobId = job.Id,
+                Type = MigrationLogType.Summary,
+                TotalProcessed = job.ProcessedMessages,
+                TotalFailed = failedMessages,
+                TotalSkipped = skippedMessages,
+                TotalDuplicates = duplicateMessages
+            });
+
             // Completed
             job.Status = MigrationJobStatus.Completed;
             job.CurrentFolder = null;
@@ -295,6 +362,9 @@ public class MigrationEngine : IMigrationEngine
         }
         catch (OperationCanceledException)
         {
+            // Flush remaining log buffer before updating status
+            try { if (logBuffer.Count > 0) await _logRepository.CreateBatchAsync(logBuffer); } catch { /* best effort */ }
+
             job.Status = MigrationJobStatus.Cancelled;
             job.CurrentFolder = null;
             await _jobRepository.UpdateAsync(job);
@@ -304,20 +374,30 @@ public class MigrationEngine : IMigrationEngine
         }
         catch (Exception ex)
         {
+            // Flush remaining log buffer before updating status
+            try { if (logBuffer.Count > 0) await _logRepository.CreateBatchAsync(logBuffer); } catch { /* best effort */ }
+
             _logger.LogError(ex, "Job {JobId}: Migration failed", jobId);
             await SetJobFailed(job, ex.Message);
             await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, MigrationJobStatus.Failed.ToString(), ex.Message);
         }
     }
 
-    private async Task SendProgressAndPersist(MigrationJob job, Guid projectId, int skipped)
+    private async Task SendProgressAndPersist(MigrationJob job, Guid projectId, int skipped, List<MigrationLog> logBuffer)
     {
         await _progressNotifier.SendProgressAsync(projectId, job.Id,
             job.ProcessedMessages, job.TotalMessages, job.CurrentFolder, skipped, job.DuplicateMessages);
 
         // Persist to DB periodically to reduce DB load
         if (job.ProcessedMessages % DbPersistInterval == 0)
+        {
             await _jobRepository.UpdateAsync(job);
+            if (logBuffer.Count > 0)
+            {
+                await _logRepository.CreateBatchAsync(logBuffer);
+                logBuffer.Clear();
+            }
+        }
     }
 
     private static bool IsSentFolder(string folderName)

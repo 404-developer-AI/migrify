@@ -41,6 +41,11 @@ else
                     <MudChip T="string" Size="Size.Small" Color="@GetProjectStatusColor(_project.Status)">
                         @_project.Status
                     </MudChip>
+                    <MudTooltip Text="View All Logs">
+                        <MudIconButton Icon="@Icons.Material.Filled.Description" Size="Size.Small"
+                                       Color="Color.Info"
+                                       Href="@($"/projects/{ProjectId}/logs")" />
+                    </MudTooltip>
                     <MudTooltip Text="Edit Project">
                         <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
                                        OnClick="OpenEditProjectDialog" />
@@ -337,6 +342,14 @@ else
                             <MudIconButton Icon="@Icons.Material.Filled.Stop" Size="Size.Small"
                                            Color="Color.Error"
                                            OnClick="@(() => CancelMigration(context))" />
+                        </MudTooltip>
+                    }
+                    @if (context.Status is MigrationJobStatus.Running or MigrationJobStatus.Completed or MigrationJobStatus.Failed or MigrationJobStatus.Cancelled)
+                    {
+                        <MudTooltip Text="View Logs">
+                            <MudIconButton Icon="@Icons.Material.Filled.Description" Size="Size.Small"
+                                           Color="Color.Info"
+                                           Href="@($"/projects/{ProjectId}/jobs/{context.Id}/logs")" />
                         </MudTooltip>
                     }
                     <MudTooltip Text="Edit">

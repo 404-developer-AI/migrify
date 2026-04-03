@@ -28,6 +28,9 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Rate limiting for Graph API compliance (10K req/10min)
 - Memory-efficient streaming with IMAP SEARCH-based date filtering
 - Per-job start/cancel controls with live progress updates
+- Per-mail error & skip logging with searchable log pages
+- Project-level and job-level log views with type filtering
+- Real-time log updates via SignalR during active migrations
 - Clean admin dashboard with premium UI (thanks MudBlazor)
 
 ## Tech Stack
@@ -46,7 +49,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 
 **Work in progress.** But the kind of progress where emails actually migrate now. The foundation is there, the walls are up, and the roof is... getting there. Still wouldn't host a dinner party though.
 
-Current version: `v0.0.10`
+Current version: `v0.0.11`
 
 The version numbering starts at 0.0.1 because even 1.0 feels too optimistic right now.
 
@@ -56,7 +59,7 @@ Technically? Yes. Small migrations are actually working. Should you trust your 5
 
 ## Roadmap
 
-There is one. It's ambitious. It currently involves logging, retry logic, parallel migrations, and eventually Docker deployment. The email migration part? That's actually done. Wild.
+There is one. It's ambitious. It currently involves retry logic, parallel migrations, and eventually Docker deployment. The email migration part? That's actually done. And now you can actually see what went wrong. Wild.
 
 ## License
 

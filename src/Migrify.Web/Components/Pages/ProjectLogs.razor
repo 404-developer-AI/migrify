@@ -1,0 +1,244 @@
+@page "/projects/{ProjectId:guid}/logs"
+@attribute [Authorize]
+@inject IMigrationLogRepository LogRepository
+@inject IProjectRepository ProjectRepository
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
+
+<PageTitle>Project Logs - Migrify</PageTitle>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_project is null)
+{
+    <MudAlert Severity="Severity.Error">Project not found.</MudAlert>
+}
+else
+{
+    <MudBreadcrumbs Items="_breadcrumbs" Class="mb-4" />
+
+    <MudCard Class="mb-4" Elevation="0">
+        <MudCardContent>
+            <MudText Typo="Typo.h5">Migration Logs</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                All jobs in @_project.Name
+            </MudText>
+        </MudCardContent>
+    </MudCard>
+
+    @* Filter chips *@
+    <div class="d-flex align-center gap-2 mb-3 flex-wrap">
+        <MudChip T="string" Color="@(_typeFilter is null ? Color.Primary : Color.Default)"
+                 OnClick="() => SetTypeFilter(null)" Size="Size.Small">
+            All (@_totalAll)
+        </MudChip>
+        <MudChip T="string" Color="@(_typeFilter == MigrationLogType.Error ? Color.Error : Color.Default)"
+                 OnClick="() => SetTypeFilter(MigrationLogType.Error)" Size="Size.Small">
+            Errors (@_countError)
+        </MudChip>
+        <MudChip T="string" Color="@(_typeFilter == MigrationLogType.Skipped ? Color.Warning : Color.Default)"
+                 OnClick="() => SetTypeFilter(MigrationLogType.Skipped)" Size="Size.Small">
+            Skipped (@_countSkipped)
+        </MudChip>
+        <MudChip T="string" Color="@(_typeFilter == MigrationLogType.Summary ? Color.Info : Color.Default)"
+                 OnClick="() => SetTypeFilter(MigrationLogType.Summary)" Size="Size.Small">
+            Summary (@_countSummary)
+        </MudChip>
+
+        <MudSpacer />
+
+        <MudTextField T="string" @bind-Value="_searchText" Placeholder="Search subject or error..."
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Immediate="true" DebounceInterval="300" TextChanged="OnSearchChanged"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 300px;" />
+    </div>
+
+    @* Log table *@
+    <MudTable @ref="_table" ServerData="LoadLogs" Dense="true" Hover="true" Elevation="0"
+              RowsPerPage="25" T="MigrationLog">
+        <HeaderContent>
+            <MudTh>Type</MudTh>
+            <MudTh>Job</MudTh>
+            <MudTh>Subject</MudTh>
+            <MudTh>Date</MudTh>
+            <MudTh>Source Folder</MudTh>
+            <MudTh>Details</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            @if (context.Type == MigrationLogType.Summary)
+            {
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info">Summary</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Job">
+                    <MudLink Href="@($"/projects/{ProjectId}/jobs/{context.MigrationJobId}/logs")"
+                             Typo="Typo.body2">
+                        @(context.MigrationJob?.SourceEmail ?? "—")
+                    </MudLink>
+                </MudTd>
+                <MudTd DataLabel="Subject" colspan="4">
+                    <MudText Typo="Typo.body2">
+                        @context.TotalProcessed processed, @context.TotalFailed failed,
+                        @context.TotalSkipped skipped, @context.TotalDuplicates duplicates
+                    </MudText>
+                </MudTd>
+            }
+            else
+            {
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@(context.Type == MigrationLogType.Error ? Color.Error : Color.Warning)">
+                        @context.Type
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Job">
+                    <MudLink Href="@($"/projects/{ProjectId}/jobs/{context.MigrationJobId}/logs")"
+                             Typo="Typo.body2">
+                        @(context.MigrationJob?.SourceEmail ?? "—")
+                    </MudLink>
+                </MudTd>
+                <MudTd DataLabel="Subject">
+                    <MudText Typo="Typo.body2" Style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        @(context.Subject ?? "—")
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Date">
+                    @(context.MessageDate?.ToString("yyyy-MM-dd HH:mm") ?? "—")
+                </MudTd>
+                <MudTd DataLabel="Source Folder">@(context.SourceFolder ?? "—")</MudTd>
+                <MudTd DataLabel="Details">
+                    @if (!string.IsNullOrEmpty(context.ErrorMessage))
+                    {
+                        <MudTooltip Text="@context.ErrorMessage">
+                            <MudText Typo="Typo.body2" Style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                @context.ErrorMessage
+                            </MudText>
+                        </MudTooltip>
+                    }
+                </MudTd>
+            }
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+        </PagerContent>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">No log entries found.</MudText>
+        </NoRecordsContent>
+    </MudTable>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private Project? _project;
+    private bool _loading = true;
+    private MigrationLogType? _typeFilter;
+    private string? _searchText;
+    private MudTable<MigrationLog>? _table;
+    private HubConnection? _hubConnection;
+
+    private int _countError;
+    private int _countSkipped;
+    private int _countSummary;
+    private int _totalAll;
+
+    private List<BreadcrumbItem> _breadcrumbs = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _project = await ProjectRepository.GetByIdAsync(ProjectId);
+        _loading = false;
+
+        if (_project is not null)
+        {
+            _breadcrumbs = new List<BreadcrumbItem>
+            {
+                new("Projects", "/projects"),
+                new(_project.Name, $"/projects/{ProjectId}"),
+                new("Logs", null, disabled: true)
+            };
+
+            await LoadCounts();
+            await SetupSignalR();
+        }
+    }
+
+    private async Task LoadCounts()
+    {
+        var counts = await LogRepository.GetCountsByProjectIdAsync(ProjectId);
+        _countError = counts.GetValueOrDefault(MigrationLogType.Error);
+        _countSkipped = counts.GetValueOrDefault(MigrationLogType.Skipped);
+        _countSummary = counts.GetValueOrDefault(MigrationLogType.Summary);
+        _totalAll = _countError + _countSkipped + _countSummary;
+    }
+
+    private async Task<TableData<MigrationLog>> LoadLogs(TableState state, CancellationToken ct)
+    {
+        var (items, totalCount) = await LogRepository.GetByProjectIdAsync(
+            ProjectId, state.Page, state.PageSize, _typeFilter, _searchText);
+        return new TableData<MigrationLog> { Items = items, TotalItems = totalCount };
+    }
+
+    private async Task SetTypeFilter(MigrationLogType? type)
+    {
+        _typeFilter = type;
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task OnSearchChanged(string? text)
+    {
+        _searchText = text;
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task SetupSignalR()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/migration-progress"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<Guid, string, string?, string?, string?>("ReceiveLogEntry",
+            async (jobId, type, subject, sourceFolder, errorMessage) =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadCounts();
+                    if (_table is not null)
+                        await _table.ReloadServerData();
+                    StateHasChanged();
+                });
+            });
+
+        _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted",
+            async (jobId, processed, total, failed, skipped, errorMessage) =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadCounts();
+                    if (_table is not null)
+                        await _table.ReloadServerData();
+                    StateHasChanged();
+                });
+            });
+
+        await _hubConnection.StartAsync();
+        await _hubConnection.InvokeAsync("JoinProject", ProjectId);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+        {
+            try
+            {
+                await _hubConnection.DisposeAsync();
+            }
+            catch { /* ignore disposal errors */ }
+        }
+    }
+}

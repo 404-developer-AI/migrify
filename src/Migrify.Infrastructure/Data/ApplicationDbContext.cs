@@ -19,6 +19,7 @@ public class ApplicationDbContext : IdentityDbContext
     public DbSet<GoogleWorkspaceSettings> GoogleWorkspaceSettings => Set<GoogleWorkspaceSettings>();
     public DbSet<DiscoveredMailbox> DiscoveredMailboxes => Set<DiscoveredMailbox>();
     public DbSet<FolderMapping> FolderMappings => Set<FolderMapping>();
+    public DbSet<MigrationLog> MigrationLogs => Set<MigrationLog>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -134,6 +135,24 @@ public class ApplicationDbContext : IdentityDbContext
 
             entity.HasOne(e => e.MigrationJob)
                 .WithMany(j => j.FolderMappings)
+                .HasForeignKey(e => e.MigrationJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<MigrationLog>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Type).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.Subject).HasMaxLength(500);
+            entity.Property(e => e.SourceFolder).HasMaxLength(500);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
+
+            entity.HasIndex(e => new { e.MigrationJobId, e.Type });
+            entity.HasIndex(e => e.CreatedAt);
+
+            entity.HasOne(e => e.MigrationJob)
+                .WithMany(j => j.MigrationLogs)
                 .HasForeignKey(e => e.MigrationJobId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
