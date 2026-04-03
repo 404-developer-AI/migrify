@@ -52,7 +52,7 @@
                 {
                     <div class="stat-number" style="color: var(--mud-palette-primary);">@_totalJobs</div>
                     <div class="stat-detail">
-                        @_runningJobs Running · @_completedJobs Completed · @_failedJobs Failed
+                        @_queuedJobs Queued · @_runningJobs Running · @_completedJobs Completed · @_failedJobs Failed
                     </div>
                 }
             </MudCardContent>
@@ -82,6 +82,7 @@
     private int _completedCount;
 
     private int _totalJobs;
+    private int _queuedJobs;
     private int _runningJobs;
     private int _completedJobs;
     private int _failedJobs;
@@ -96,6 +97,7 @@
 
         var jobCounts = await JobRepository.GetStatusCountsAsync();
         _totalJobs = jobCounts.Values.Sum();
+        _queuedJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Queued);
         _runningJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Running);
         _completedJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Completed);
         _failedJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Failed);

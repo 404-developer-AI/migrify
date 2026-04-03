@@ -18,6 +18,7 @@ public static class MigrationHelpers
         var client = new ImapClient();
         client.ServerCertificateValidationCallback = (_, _, _, _) => true;
         client.CheckCertificateRevocation = false;
+        client.Timeout = 120_000; // 2 minute I/O timeout — prevents hangs when server drops connection
         client.SslProtocols = System.Security.Authentication.SslProtocols.Tls12
                             | System.Security.Authentication.SslProtocols.Tls13;
         return client;

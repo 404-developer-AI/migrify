@@ -4,6 +4,7 @@ public enum MigrationJobStatus
 {
     New,
     Ready,
+    Queued,
     Running,
     Paused,
     Completed,

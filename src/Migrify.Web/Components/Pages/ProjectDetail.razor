@@ -174,11 +174,28 @@ else
     @* Migration Jobs *@
     <div class="d-flex justify-space-between align-center mb-3">
         <MudText Typo="Typo.h6" Class="section-title">Migration Jobs</MudText>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary"
-                   StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
-                   OnClick="OpenAddJobDialog">
-            Add Job
-        </MudButton>
+        <div class="d-flex align-center gap-2">
+            @if (_jobs.Count > 0)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PlayArrow"
+                           Disabled="@(!_selectedJobs.Any(id => _jobs.Any(j => j.Id == id && CanStartMigration(j))))"
+                           OnClick="StartSelectedJobs">
+                    Start Selected (@_selectedJobs.Count(id => _jobs.Any(j => j.Id == id && CanStartMigration(j))))
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PlayCircle"
+                           Disabled="@(!_jobs.Any(CanStartMigration))"
+                           OnClick="StartAllJobs">
+                    Start All
+                </MudButton>
+            }
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Add" Size="Size.Small"
+                       OnClick="OpenAddJobDialog">
+                Add Job
+            </MudButton>
+        </div>
     </div>
 
     @if (_jobs.Count == 0)
@@ -191,6 +208,12 @@ else
     {
         <MudTable Items="_jobs" Hover="true" Elevation="0">
             <HeaderContent>
+                <MudTh Style="width: 50px;">
+                    <MudCheckBox T="bool" Value="@(_selectedJobs.Count == _jobs.Count(CanStartMigration) && _jobs.Any(CanStartMigration))"
+                                 ValueChanged="@(v => ToggleSelectAll(v))"
+                                 Size="Size.Small" Color="Color.Primary"
+                                 Disabled="@(!_jobs.Any(CanStartMigration))" />
+                </MudTh>
                 <MudTh>Source Email</MudTh>
                 <MudTh>Destination Email</MudTh>
                 <MudTh>Source Auth</MudTh>
@@ -201,6 +224,12 @@ else
                 <MudTh Style="width: 220px;">Actions</MudTh>
             </HeaderContent>
             <RowTemplate>
+                <MudTd>
+                    <MudCheckBox T="bool" Value="@(_selectedJobs.Contains(context.Id))"
+                                 ValueChanged="@(v => ToggleJobSelection(context.Id, v))"
+                                 Size="Size.Small" Color="Color.Primary"
+                                 Disabled="@(!CanStartMigration(context))" />
+                </MudTd>
                 <MudTd DataLabel="Source Email">
                     <MudText Typo="Typo.body2">@context.SourceEmail</MudText>
                 </MudTd>
@@ -346,13 +375,21 @@ else
                                            OnClick="@(() => OpenFolderMappingDialog(context))" />
                         </MudTooltip>
                     }
-                    @if (context.Status != MigrationJobStatus.Running)
+                    @if (context.Status is not MigrationJobStatus.Running and not MigrationJobStatus.Queued)
                     {
                         <MudTooltip Text="@(HasCheckpoints(context) && CanStartMigration(context) ? "Resume / Restart Migration" : GetStartBlockReason(context))">
                             <MudIconButton Icon="@(HasCheckpoints(context) ? Icons.Material.Filled.PlayCircle : Icons.Material.Filled.PlayArrow)" Size="Size.Small"
                                            Color="Color.Success"
                                            Disabled="@(!CanStartMigration(context))"
                                            OnClick="@(() => StartMigration(context))" />
+                        </MudTooltip>
+                    }
+                    @if (context.Status == MigrationJobStatus.Queued)
+                    {
+                        <MudTooltip Text="Remove from Queue">
+                            <MudIconButton Icon="@Icons.Material.Filled.RemoveFromQueue" Size="Size.Small"
+                                           Color="Color.Warning"
+                                           OnClick="@(() => CancelQueuedJob(context))" />
                         </MudTooltip>
                     }
                     @if (context.Status == MigrationJobStatus.Running)
@@ -363,7 +400,7 @@ else
                                            OnClick="@(() => CancelMigration(context))" />
                         </MudTooltip>
                     }
-                    @if (context.Status is MigrationJobStatus.Running or MigrationJobStatus.Completed or MigrationJobStatus.Failed or MigrationJobStatus.Cancelled)
+                    @if (context.Status is MigrationJobStatus.Running or MigrationJobStatus.Queued or MigrationJobStatus.Completed or MigrationJobStatus.Failed or MigrationJobStatus.Cancelled)
                     {
                         <MudTooltip Text="View Logs">
                             <MudIconButton Icon="@Icons.Material.Filled.Description" Size="Size.Small"
@@ -374,13 +411,13 @@ else
                     <MudTooltip Text="Edit">
                         <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
                                        OnClick="@(() => OpenEditJobDialog(context))"
-                                       Disabled="@(context.Status == MigrationJobStatus.Running)" />
+                                       Disabled="@(context.Status is MigrationJobStatus.Running or MigrationJobStatus.Queued)" />
                     </MudTooltip>
                     <MudTooltip Text="Delete">
                         <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
                                        Color="Color.Error"
                                        OnClick="@(() => OpenDeleteJobDialog(context))"
-                                       Disabled="@(context.Status == MigrationJobStatus.Running)" />
+                                       Disabled="@(context.Status is MigrationJobStatus.Running or MigrationJobStatus.Queued)" />
                     </MudTooltip>
                 </MudTd>
             </RowTemplate>
@@ -401,6 +438,7 @@ else
     private bool _isDiscoveringSource;
     private bool _isDiscoveringDest;
     private HubConnection? _hubConnection;
+    private HashSet<Guid> _selectedJobs = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -705,6 +743,7 @@ else
     {
         MigrationJobStatus.New => Color.Info,
         MigrationJobStatus.Ready => Color.Default,
+        MigrationJobStatus.Queued => Color.Tertiary,
         MigrationJobStatus.Running => Color.Warning,
         MigrationJobStatus.Paused => Color.Secondary,
         MigrationJobStatus.Completed => Color.Success,
@@ -737,6 +776,95 @@ else
             && !string.IsNullOrEmpty(_project.M365Settings.TenantId);
     }
 
+    private void ToggleJobSelection(Guid jobId, bool selected)
+    {
+        if (selected)
+            _selectedJobs.Add(jobId);
+        else
+            _selectedJobs.Remove(jobId);
+    }
+
+    private void ToggleSelectAll(bool selectAll)
+    {
+        _selectedJobs.Clear();
+        if (selectAll)
+        {
+            foreach (var job in _jobs.Where(CanStartMigration))
+                _selectedJobs.Add(job.Id);
+        }
+    }
+
+    private async Task StartSelectedJobs()
+    {
+        var jobsToStart = _jobs.Where(j => _selectedJobs.Contains(j.Id) && CanStartMigration(j)).ToList();
+        await EnqueueJobs(jobsToStart);
+        _selectedJobs.Clear();
+    }
+
+    private async Task StartAllJobs()
+    {
+        var jobsToStart = _jobs.Where(CanStartMigration).ToList();
+        await EnqueueJobs(jobsToStart);
+    }
+
+    private async Task EnqueueJobs(List<MigrationJob> jobs)
+    {
+        foreach (var job in jobs)
+        {
+            var isResume = false;
+
+            if (HasCheckpoints(job))
+            {
+                var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+                var dialog = await DialogService.ShowAsync<ResumeOrFreshDialog>(
+                    $"Resume or Start Fresh? — {job.SourceEmail}", options);
+                var result = await dialog.Result;
+
+                if (result is null || result.Canceled)
+                    continue;
+
+                var choice = result.Data?.ToString();
+                if (choice == "fresh")
+                {
+                    foreach (var mapping in job.FolderMappings)
+                        mapping.LastProcessedUid = null;
+                }
+                else
+                {
+                    isResume = true;
+                }
+            }
+
+            job.Status = MigrationJobStatus.Queued;
+            job.ProcessedMessages = 0;
+            job.TotalMessages = 0;
+            job.SkippedMessages = 0;
+            job.DuplicateMessages = 0;
+            job.ErrorMessage = null;
+            job.CurrentFolder = isResume ? "Queued (resume)..." : "Queued...";
+            await JobRepository.UpdateAsync(job);
+            await MigrationQueue.EnqueueAsync(job.Id);
+        }
+
+        if (jobs.Count > 0)
+        {
+            Snackbar.Add($"{jobs.Count} job(s) added to queue.", Severity.Success);
+            StateHasChanged();
+        }
+    }
+
+    private async Task CancelQueuedJob(MigrationJob job)
+    {
+        if (MigrationQueue.TryCancelQueued(job.Id))
+        {
+            job.Status = MigrationJobStatus.Ready;
+            job.CurrentFolder = null;
+            await JobRepository.UpdateAsync(job);
+            Snackbar.Add($"Removed {job.SourceEmail} from queue.", Severity.Info);
+            StateHasChanged();
+        }
+    }
+
     private static string GetOptionsTooltip(MigrationJob job)
     {
         var parts = new List<string>();
@@ -757,6 +885,7 @@ else
         if (!job.FolderMappings.Any()) return "No folder mappings configured";
         if (!job.MigrationOptionsConfigured) return "Migration options not configured";
         if (job.Status == MigrationJobStatus.Running) return "Migration is running";
+        if (job.Status == MigrationJobStatus.Queued) return "Job is in queue";
         if (job.Status == MigrationJobStatus.Paused) return "Migration is paused";
         if (!HasSourceAccess(job)) return "Source access not configured";
         if (_project?.M365Settings is null || string.IsNullOrEmpty(_project.M365Settings.TenantId))
@@ -766,45 +895,7 @@ else
 
     private async Task StartMigration(MigrationJob job)
     {
-        var isResume = false;
-
-        // If checkpoints exist, ask user to resume or start fresh
-        if (HasCheckpoints(job))
-        {
-            var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
-            var dialog = await DialogService.ShowAsync<ResumeOrFreshDialog>("Resume or Start Fresh?", options);
-            var result = await dialog.Result;
-
-            if (result is null || result.Canceled)
-                return;
-
-            var choice = result.Data?.ToString();
-            if (choice == "fresh")
-            {
-                foreach (var mapping in job.FolderMappings)
-                    mapping.LastProcessedUid = null;
-            }
-            else
-            {
-                isResume = true;
-            }
-        }
-
-        // Set status immediately so UI reflects the change
-        job.Status = MigrationJobStatus.Running;
-        job.ProcessedMessages = 0;
-        job.TotalMessages = 0;
-        job.SkippedMessages = 0;
-        job.DuplicateMessages = 0;
-        job.ErrorMessage = null;
-        job.CurrentFolder = isResume ? "Resuming..." : "Starting...";
-        await JobRepository.UpdateAsync(job);
-
-        await MigrationQueue.EnqueueAsync(job.Id);
-        Snackbar.Add(isResume
-            ? $"Resuming migration for {job.SourceEmail}."
-            : $"Migration started for {job.SourceEmail}.", Severity.Success);
-        StateHasChanged();
+        await EnqueueJobs(new List<MigrationJob> { job });
     }
 
     private async Task CancelMigration(MigrationJob job)
