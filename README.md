@@ -39,6 +39,9 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Job timing info: start time, end time, and duration visible on status chips
 - Parallel migration engine: multiple jobs run simultaneously
 - Global FIFO queue with Queued status and cancel-from-queue support
+- Smart concurrency limits: 3-layer model (system resources, per M365 tenant, per source server)
+- Known provider detection (Gmail, Outlook, Yahoo, etc.) with provider-specific connection limits
+- Manual override for concurrency limits via Settings page with safety warnings
 - Bulk start: checkboxes with "Start Selected" and "Start All" buttons
 - Clean admin dashboard with premium UI (thanks MudBlazor)
 
@@ -68,7 +71,7 @@ Technically? Yes. Small migrations are actually working. Should you trust your 5
 
 ## Roadmap
 
-There is one. It's ambitious. It currently involves parallel migrations and eventually Docker deployment. The email migration part? That's actually done. Failed mails can be retried, interrupted migrations can be resumed, and incremental sync re-runs only fetch new emails. Wild.
+There is one. It's ambitious. It currently involves smart queue management and eventually Docker deployment. The email migration part? That's actually done. Failed mails can be retried, interrupted migrations can be resumed, and incremental sync re-runs only fetch new emails. Wild.
 
 ## License
 
