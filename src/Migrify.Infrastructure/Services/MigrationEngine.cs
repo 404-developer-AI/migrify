@@ -64,6 +64,16 @@ public class MigrationEngine : IMigrationEngine
             // Incremental mode always forces duplicate checking
             bool checkDuplicates = job.SkipDuplicates || job.MigrationMode == MigrationMode.Incremental;
 
+            // Effective date range: for incremental re-runs, auto-fill DateFrom with LastCompletedAt
+            var effectiveDateFrom = job.DateFrom;
+            var effectiveDateTo = job.DateTo;
+            if (job.MigrationMode == MigrationMode.Incremental && job.LastCompletedAt.HasValue && !effectiveDateFrom.HasValue)
+            {
+                effectiveDateFrom = job.LastCompletedAt.Value;
+                _logger.LogInformation("Job {JobId}: Incremental mode — using LastCompletedAt {Date:u} as DateFrom",
+                    jobId, effectiveDateFrom);
+            }
+
             // Resume detection: check if folder mappings have checkpoint UIDs
             bool isResume = job.FolderMappings.Any(m => m.LastProcessedUid.HasValue);
             if (isResume)
@@ -71,8 +81,10 @@ public class MigrationEngine : IMigrationEngine
                 _logger.LogInformation("Job {JobId}: Resuming from checkpoint — skipping already-processed UIDs per folder", jobId);
             }
 
-            // Set status to Running and reset counters
+            // Set status to Running, record start time, and reset counters
             job.Status = MigrationJobStatus.Running;
+            job.StartedAt = DateTime.UtcNow;
+            job.CompletedAt = null;
             job.ProcessedMessages = 0;
             job.TotalMessages = 0;
             job.SkippedMessages = 0;
@@ -97,7 +109,7 @@ public class MigrationEngine : IMigrationEngine
 
             // Count total messages across all mapped folders (with date filtering)
             var mappings = job.FolderMappings.OrderBy(m => m.SourceFolderName).ToList();
-            var folderMessageUids = await GetFilteredMessageUids(job, project, mappings, cancellationToken);
+            var folderMessageUids = await GetFilteredMessageUids(job, project, mappings, effectiveDateFrom, effectiveDateTo, cancellationToken);
 
             job.TotalMessages = folderMessageUids.Values.Sum(uids => uids.Count);
             await _jobRepository.UpdateAsync(job);
@@ -109,6 +121,8 @@ public class MigrationEngine : IMigrationEngine
             if (job.TotalMessages == 0)
             {
                 job.Status = MigrationJobStatus.Completed;
+                job.CompletedAt = DateTime.UtcNow;
+                job.LastCompletedAt = job.CompletedAt;
                 job.CurrentFolder = null;
                 await _jobRepository.UpdateAsync(job);
                 await _progressNotifier.SendJobCompletedAsync(project.Id, job.Id, 0, 0, 0, 0, null);
@@ -191,7 +205,7 @@ public class MigrationEngine : IMigrationEngine
                             var message = await folder.GetMessageAsync(uid, cancellationToken);
 
                             // Post-fetch date filter for Sent Items (IMAP SEARCH uses InternalDate, but Sent Items should use Date header)
-                            if (isSentFolder && !PassesDateFilter(message.Date, job.DateFrom, job.DateTo))
+                            if (isSentFolder && !PassesDateFilter(message.Date, effectiveDateFrom, effectiveDateTo))
                             {
                                 skippedMessages++;
                                 logBuffer.Add(new MigrationLog
@@ -354,13 +368,13 @@ public class MigrationEngine : IMigrationEngine
                 TotalDuplicates = duplicateMessages
             });
 
-            // Completed — clear checkpoints so next run starts fresh
+            // Completed — preserve checkpoints for incremental re-runs
             job.Status = MigrationJobStatus.Completed;
+            job.CompletedAt = DateTime.UtcNow;
+            job.LastCompletedAt = job.CompletedAt;
             job.CurrentFolder = null;
             job.SkippedMessages = skippedMessages;
             job.DuplicateMessages = duplicateMessages;
-            foreach (var m in job.FolderMappings)
-                m.LastProcessedUid = null;
 
             // Only failed and skipped (>4MB/date) count as warnings — duplicates are normal
             if (skippedMessages > 0 || failedMessages > 0)
@@ -380,6 +394,7 @@ public class MigrationEngine : IMigrationEngine
             try { if (logBuffer.Count > 0) await _logRepository.CreateBatchAsync(logBuffer); } catch { /* best effort */ }
 
             job.Status = MigrationJobStatus.Cancelled;
+            job.CompletedAt = DateTime.UtcNow;
             job.CurrentFolder = null;
             await _jobRepository.UpdateAsync(job);
             await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, job.Status.ToString(), null);
@@ -392,6 +407,7 @@ public class MigrationEngine : IMigrationEngine
             try { if (logBuffer.Count > 0) await _logRepository.CreateBatchAsync(logBuffer); } catch { /* best effort */ }
 
             _logger.LogError(ex, "Job {JobId}: Migration failed", jobId);
+            job.CompletedAt = DateTime.UtcNow;
             await SetJobFailed(job, ex.Message);
             await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, MigrationJobStatus.Failed.ToString(), ex.Message);
         }
@@ -544,7 +560,8 @@ public class MigrationEngine : IMigrationEngine
     /// to avoid downloading messages that will be skipped.
     /// </summary>
     private async Task<Dictionary<string, IList<UniqueId>>> GetFilteredMessageUids(
-        MigrationJob job, Project project, List<FolderMapping> mappings, CancellationToken ct)
+        MigrationJob job, Project project, List<FolderMapping> mappings,
+        DateTime? dateFrom, DateTime? dateTo, CancellationToken ct)
     {
         var result = new Dictionary<string, IList<UniqueId>>();
 
@@ -559,7 +576,7 @@ public class MigrationEngine : IMigrationEngine
                 await folder.OpenAsync(FolderAccess.ReadOnly, ct);
 
                 // Build IMAP SEARCH query with date range (uses InternalDate)
-                var searchQuery = BuildDateSearchQuery(job.DateFrom, job.DateTo);
+                var searchQuery = BuildDateSearchQuery(dateFrom, dateTo);
 
                 IList<UniqueId> uids;
                 if (searchQuery is not null)

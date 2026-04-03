@@ -11,6 +11,11 @@ public class MigrationJob
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 
+    // Migration run timestamps
+    public DateTime? StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public DateTime? LastCompletedAt { get; set; }
+
     public bool HasImapOverride { get; set; }
 
     // Migration options

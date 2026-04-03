@@ -1,0 +1,27 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.PlayCircle" Color="Color.Primary" Class="mr-2" />
+            Resume or Start Fresh?
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText>
+            This job has checkpoints from a previous run. How would you like to proceed?
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="StartFresh">Start fresh</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Resume">Resume from checkpoint</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    private void Cancel() => MudDialog.Cancel();
+    private void StartFresh() => MudDialog.Close(DialogResult.Ok("fresh"));
+    private void Resume() => MudDialog.Close(DialogResult.Ok("resume"));
+}

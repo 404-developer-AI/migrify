@@ -264,12 +264,31 @@ else
                     }
                 </MudTd>
                 <MudTd DataLabel="Status">
-                    @if (context.Status == MigrationJobStatus.Completed && !string.IsNullOrEmpty(context.ErrorMessage))
+                    @if (context.Status is MigrationJobStatus.Completed or MigrationJobStatus.Failed or MigrationJobStatus.Cancelled
+                        && context.StartedAt.HasValue)
                     {
-                        <MudTooltip Text="@context.ErrorMessage">
-                            <MudChip T="string" Size="Size.Small" Color="Color.Warning">
-                                Completed
-                            </MudChip>
+                        <MudTooltip>
+                            <TooltipContent>
+                                <div style="text-align: left; white-space: pre-line;">
+                                    <div>Started: @context.StartedAt.Value.ToLocalTime().ToString("dd-MM-yyyy HH:mm:ss")</div>
+                                    @if (context.CompletedAt.HasValue)
+                                    {
+                                        <div>Finished: @context.CompletedAt.Value.ToLocalTime().ToString("dd-MM-yyyy HH:mm:ss")</div>
+                                        <div>Duration: @FormatDuration(context.CompletedAt.Value - context.StartedAt.Value)</div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(context.ErrorMessage))
+                                    {
+                                        <div class="mt-1">@context.ErrorMessage</div>
+                                    }
+                                </div>
+                            </TooltipContent>
+                            <ChildContent>
+                                <MudChip T="string" Size="Size.Small"
+                                         Color="@(context.Status == MigrationJobStatus.Completed && !string.IsNullOrEmpty(context.ErrorMessage)
+                                             ? Color.Warning : GetJobStatusColor(context.Status))">
+                                    @context.Status
+                                </MudChip>
+                            </ChildContent>
                         </MudTooltip>
                     }
                     else
@@ -329,8 +348,8 @@ else
                     }
                     @if (context.Status != MigrationJobStatus.Running)
                     {
-                        <MudTooltip Text="@(IsResumable(context) && CanStartMigration(context) ? "Resume Migration" : GetStartBlockReason(context))">
-                            <MudIconButton Icon="@(IsResumable(context) ? Icons.Material.Filled.PlayCircle : Icons.Material.Filled.PlayArrow)" Size="Size.Small"
+                        <MudTooltip Text="@(HasCheckpoints(context) && CanStartMigration(context) ? "Resume / Restart Migration" : GetStartBlockReason(context))">
+                            <MudIconButton Icon="@(HasCheckpoints(context) ? Icons.Material.Filled.PlayCircle : Icons.Material.Filled.PlayArrow)" Size="Size.Small"
                                            Color="Color.Success"
                                            Disabled="@(!CanStartMigration(context))"
                                            OnClick="@(() => StartMigration(context))" />
@@ -694,9 +713,17 @@ else
         _ => Color.Default
     };
 
-    private static bool IsResumable(MigrationJob job) =>
-        job.FolderMappings.Any(m => m.LastProcessedUid.HasValue)
-        && job.Status is MigrationJobStatus.Failed or MigrationJobStatus.Cancelled;
+    private static bool HasCheckpoints(MigrationJob job) =>
+        job.FolderMappings.Any(m => m.LastProcessedUid.HasValue);
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalHours >= 1)
+            return $"{(int)duration.TotalHours}h {duration.Minutes}m {duration.Seconds}s";
+        if (duration.TotalMinutes >= 1)
+            return $"{(int)duration.TotalMinutes}m {duration.Seconds}s";
+        return $"{duration.Seconds}s";
+    }
 
     private bool CanStartMigration(MigrationJob job)
     {
@@ -739,7 +766,29 @@ else
 
     private async Task StartMigration(MigrationJob job)
     {
-        var isResume = IsResumable(job);
+        var isResume = false;
+
+        // If checkpoints exist, ask user to resume or start fresh
+        if (HasCheckpoints(job))
+        {
+            var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true };
+            var dialog = await DialogService.ShowAsync<ResumeOrFreshDialog>("Resume or Start Fresh?", options);
+            var result = await dialog.Result;
+
+            if (result is null || result.Canceled)
+                return;
+
+            var choice = result.Data?.ToString();
+            if (choice == "fresh")
+            {
+                foreach (var mapping in job.FolderMappings)
+                    mapping.LastProcessedUid = null;
+            }
+            else
+            {
+                isResume = true;
+            }
+        }
 
         // Set status immediately so UI reflects the change
         job.Status = MigrationJobStatus.Running;

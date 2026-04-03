@@ -227,6 +227,13 @@
                                        DateFormat="dd-MM-yyyy" Placeholder="No end date" />
                     </MudItem>
                 </MudGrid>
+                @if (_migrationMode == MigrationMode.Incremental && ExistingJob?.LastCompletedAt.HasValue == true && !_dateFrom.HasValue)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mt-2">
+                        DateFrom will automatically use last completed run (@ExistingJob.LastCompletedAt.Value.ToLocalTime().ToString("dd-MM-yyyy HH:mm")).
+                        Set a custom date above to override.
+                    </MudAlert>
+                }
 
                 <MudDivider Class="my-4" />
 
