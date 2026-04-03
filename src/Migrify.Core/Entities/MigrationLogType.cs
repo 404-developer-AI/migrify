@@ -4,5 +4,6 @@ public enum MigrationLogType
 {
     Error,
     Skipped,
-    Summary
+    Summary,
+    Retried
 }

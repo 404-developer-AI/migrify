@@ -1,11 +1,7 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using Azure.Identity;
-using Google.Apis.Auth.OAuth2;
 using MailKit;
-using MailKit.Net.Imap;
-using MailKit.Security;
 using Microsoft.Extensions.Logging;
 using Migrify.Core.Entities;
 using Migrify.Core.Interfaces;
@@ -21,7 +17,6 @@ public class MigrationEngine : IMigrationEngine
     private readonly IMigrationProgressNotifier _progressNotifier;
     private readonly ILogger<MigrationEngine> _logger;
 
-    private const int MaxMimeSize = 4 * 1024 * 1024; // 4MB Graph API limit for direct upload
     private const int DbPersistInterval = 10; // Persist to DB every N messages
     private static readonly TimeSpan RateLimitDelay = TimeSpan.FromMilliseconds(150); // ~7 msg/sec with duplicate check
 
@@ -69,7 +64,14 @@ public class MigrationEngine : IMigrationEngine
             // Incremental mode always forces duplicate checking
             bool checkDuplicates = job.SkipDuplicates || job.MigrationMode == MigrationMode.Incremental;
 
-            // Set status to Running
+            // Resume detection: check if folder mappings have checkpoint UIDs
+            bool isResume = job.FolderMappings.Any(m => m.LastProcessedUid.HasValue);
+            if (isResume)
+            {
+                _logger.LogInformation("Job {JobId}: Resuming from checkpoint — skipping already-processed UIDs per folder", jobId);
+            }
+
+            // Set status to Running and reset counters
             job.Status = MigrationJobStatus.Running;
             job.ProcessedMessages = 0;
             job.TotalMessages = 0;
@@ -123,12 +125,34 @@ public class MigrationEngine : IMigrationEngine
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var uids = folderMessageUids.GetValueOrDefault(mapping.SourceFolderName);
-                if (uids is null || uids.Count == 0)
+                var allUids = folderMessageUids.GetValueOrDefault(mapping.SourceFolderName);
+                if (allUids is null || allUids.Count == 0)
                 {
                     _logger.LogDebug("Job {JobId}: Folder '{Folder}' has no matching messages, skipping", jobId, mapping.SourceFolderName);
                     continue;
                 }
+
+                // Resume: skip UIDs already processed in a previous run
+                IList<UniqueId> uids;
+                if (isResume && mapping.LastProcessedUid.HasValue)
+                {
+                    var checkpoint = mapping.LastProcessedUid.Value;
+                    uids = allUids.Where(u => u.Id > checkpoint).ToList();
+                    var skippedCount = allUids.Count - uids.Count;
+                    if (skippedCount > 0)
+                    {
+                        _logger.LogInformation("Job {JobId}: Folder '{Folder}' — skipping {Skipped} already-processed messages (checkpoint UID {Uid})",
+                            jobId, mapping.SourceFolderName, skippedCount, checkpoint);
+                        job.ProcessedMessages += skippedCount;
+                    }
+                }
+                else
+                {
+                    uids = allUids;
+                }
+
+                if (uids.Count == 0)
+                    continue;
 
                 job.CurrentFolder = mapping.SourceFolderName;
                 await _jobRepository.UpdateAsync(job);
@@ -137,10 +161,10 @@ public class MigrationEngine : IMigrationEngine
                     jobId, mapping.SourceFolderName, mapping.DestinationFolderDisplayName, uids.Count);
 
                 // Connect to IMAP and migrate messages
-                using var imapClient = CreateImapClient();
+                using var imapClient = MigrationHelpers.CreateImapClient();
                 try
                 {
-                    await ConnectAndAuthenticate(imapClient, job, project, cancellationToken);
+                    await MigrationHelpers.ConnectAndAuthenticate(imapClient, job, project, _encryptor, _oauthProvider, _logger, cancellationToken);
 
                     var folder = await imapClient.GetFolderAsync(mapping.SourceFolderName, cancellationToken);
                     await folder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
@@ -182,7 +206,7 @@ public class MigrationEngine : IMigrationEngine
                                 await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Skipped", message.Subject, mapping.SourceFolderName, "Outside date filter range");
                                 job.ProcessedMessages++;
                                 job.SkippedMessages = skippedMessages;
-                                await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer);
+                                await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer, mapping, uid);
                                 continue;
                             }
 
@@ -198,7 +222,7 @@ public class MigrationEngine : IMigrationEngine
                                     duplicateMessages++;
                                     job.ProcessedMessages++;
                                     job.DuplicateMessages = duplicateMessages;
-                                    await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer);
+                                    await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer, mapping, uid);
                                     continue;
                                 }
                             }
@@ -206,7 +230,7 @@ public class MigrationEngine : IMigrationEngine
                             using var mimeStream = new MemoryStream();
                             await message.WriteToAsync(mimeStream, cancellationToken);
 
-                            if (mimeStream.Length > MaxMimeSize)
+                            if (mimeStream.Length > MigrationHelpers.MaxMimeSize)
                             {
                                 var sizeMb = mimeStream.Length / (1024.0 * 1024.0);
                                 _logger.LogWarning("Job {JobId}: Skipping message '{Subject}' in '{Folder}' — size {Size}MB exceeds 4MB limit",
@@ -224,21 +248,20 @@ public class MigrationEngine : IMigrationEngine
                                 await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Skipped", message.Subject, mapping.SourceFolderName, $"Size {sizeMb:F1}MB exceeds 4MB limit");
                                 job.ProcessedMessages++;
                                 job.SkippedMessages = skippedMessages;
-                                await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer);
+                                await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer, mapping, uid);
                                 continue;
                             }
 
                             // Build Graph API JSON message with MAPI flags to prevent draft status
-                            var graphMessage = ConvertToGraphMessage(message);
+                            var graphMessage = MigrationHelpers.ConvertToGraphMessage(message);
                             var uploadUrl = $"https://graph.microsoft.com/v1.0/users/{Uri.EscapeDataString(job.DestinationEmail)}/mailFolders/{mapping.DestinationFolderId}/messages";
 
                             _logger.LogDebug("Job {JobId}: Uploading '{Subject}' to '{DestFolder}'",
                                 jobId, message.Subject, mapping.DestinationFolderDisplayName);
 
                             var jsonPayload = System.Text.Json.JsonSerializer.Serialize(graphMessage);
-                            using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-                            var response = await httpClient.PostAsync(uploadUrl, content, cancellationToken);
+                            var response = await UploadWithRetryAsync(httpClient, uploadUrl, jsonPayload, jobId, cancellationToken);
 
                             if (!response.IsSuccessStatusCode)
                             {
@@ -254,25 +277,12 @@ public class MigrationEngine : IMigrationEngine
                                     Subject = message.Subject,
                                     MessageDate = message.Date != DateTimeOffset.MinValue ? message.Date.UtcDateTime : null,
                                     SourceFolder = mapping.SourceFolderName,
-                                    ErrorMessage = errorDetail.Length > 2000 ? errorDetail[..2000] : errorDetail
+                                    ErrorMessage = errorDetail.Length > 2000 ? errorDetail[..2000] : errorDetail,
+                                    InternetMessageId = message.MessageId,
+                                    SourceUid = uid.Id,
+                                    DestinationFolderId = mapping.DestinationFolderId
                                 });
                                 await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Error", message.Subject, mapping.SourceFolderName, response.StatusCode.ToString());
-
-                                // Handle rate limiting
-                                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-                                {
-                                    var retryAfter = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30);
-                                    _logger.LogWarning("Job {JobId}: Rate limited, waiting {Seconds}s", jobId, retryAfter.TotalSeconds);
-                                    await Task.Delay(retryAfter, cancellationToken);
-
-                                    using var retryContent = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-                                    response = await httpClient.PostAsync(uploadUrl, retryContent, cancellationToken);
-                                    if (response.IsSuccessStatusCode)
-                                    {
-                                        failedMessages--;
-                                        logBuffer.RemoveAt(logBuffer.Count - 1); // Remove the error entry since retry succeeded
-                                    }
-                                }
                             }
                         }
                         catch (OperationCanceledException)
@@ -290,14 +300,16 @@ public class MigrationEngine : IMigrationEngine
                                 MigrationJobId = job.Id,
                                 Type = MigrationLogType.Error,
                                 SourceFolder = mapping.SourceFolderName,
-                                ErrorMessage = errorMsg
+                                ErrorMessage = errorMsg,
+                                SourceUid = uid.Id,
+                                DestinationFolderId = mapping.DestinationFolderId
                             });
                             await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Error", null, mapping.SourceFolderName, errorMsg);
                         }
 
                         job.ProcessedMessages++;
                         job.SkippedMessages = skippedMessages;
-                        await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer);
+                        await SendProgressAndPersist(job, project.Id, skippedMessages, logBuffer, mapping, uid);
                     }
 
                     await folder.CloseAsync(false, cancellationToken);
@@ -342,11 +354,13 @@ public class MigrationEngine : IMigrationEngine
                 TotalDuplicates = duplicateMessages
             });
 
-            // Completed
+            // Completed — clear checkpoints so next run starts fresh
             job.Status = MigrationJobStatus.Completed;
             job.CurrentFolder = null;
             job.SkippedMessages = skippedMessages;
             job.DuplicateMessages = duplicateMessages;
+            foreach (var m in job.FolderMappings)
+                m.LastProcessedUid = null;
 
             // Only failed and skipped (>4MB/date) count as warnings — duplicates are normal
             if (skippedMessages > 0 || failedMessages > 0)
@@ -383,7 +397,44 @@ public class MigrationEngine : IMigrationEngine
         }
     }
 
-    private async Task SendProgressAndPersist(MigrationJob job, Guid projectId, int skipped, List<MigrationLog> logBuffer)
+    private async Task<HttpResponseMessage> UploadWithRetryAsync(
+        HttpClient httpClient, string uploadUrl, string jsonPayload, Guid jobId,
+        CancellationToken ct, int maxAttempts = 3)
+    {
+        HttpResponseMessage? response = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            response = await httpClient.PostAsync(uploadUrl, content, ct);
+
+            if (response.IsSuccessStatusCode)
+                return response;
+
+            if (!IsTransientError(response) || attempt == maxAttempts)
+                return response;
+
+            // Exponential backoff: for 429 use RetryAfter header, otherwise 1s, 2s, 4s
+            var delay = response.StatusCode == HttpStatusCode.TooManyRequests
+                ? (response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, attempt - 1)))
+                : TimeSpan.FromSeconds(Math.Pow(2, attempt - 1));
+
+            _logger.LogWarning("Job {JobId}: Transient error {Status}, attempt {Attempt}/{Max}, waiting {Delay}s",
+                jobId, response.StatusCode, attempt, maxAttempts, delay.TotalSeconds);
+            await Task.Delay(delay, ct);
+        }
+        return response!;
+    }
+
+    private static bool IsTransientError(HttpResponseMessage response)
+    {
+        return response.StatusCode is HttpStatusCode.TooManyRequests       // 429
+            or HttpStatusCode.ServiceUnavailable                           // 503
+            or HttpStatusCode.GatewayTimeout                               // 504
+            or HttpStatusCode.RequestTimeout;                              // 408
+    }
+
+    private async Task SendProgressAndPersist(MigrationJob job, Guid projectId, int skipped,
+        List<MigrationLog> logBuffer, FolderMapping? mapping = null, UniqueId? currentUid = null)
     {
         await _progressNotifier.SendProgressAsync(projectId, job.Id,
             job.ProcessedMessages, job.TotalMessages, job.CurrentFolder, skipped, job.DuplicateMessages);
@@ -391,6 +442,10 @@ public class MigrationEngine : IMigrationEngine
         // Persist to DB periodically to reduce DB load
         if (job.ProcessedMessages % DbPersistInterval == 0)
         {
+            // Update checkpoint UID for resume support
+            if (mapping is not null && currentUid.HasValue)
+                mapping.LastProcessedUid = currentUid.Value.Id;
+
             await _jobRepository.UpdateAsync(job);
             if (logBuffer.Count > 0)
             {
@@ -448,104 +503,6 @@ public class MigrationEngine : IMigrationEngine
     }
 
 
-    private static Dictionary<string, object?> ConvertToGraphMessage(MimeKit.MimeMessage mime)
-    {
-        var msg = new Dictionary<string, object?>
-        {
-            ["subject"] = mime.Subject ?? "(no subject)",
-            ["internetMessageId"] = mime.MessageId,
-        };
-
-        // Body
-        var htmlBody = mime.HtmlBody;
-        var textBody = mime.TextBody;
-        if (!string.IsNullOrEmpty(htmlBody))
-            msg["body"] = new { contentType = "html", content = htmlBody };
-        else if (!string.IsNullOrEmpty(textBody))
-            msg["body"] = new { contentType = "text", content = textBody };
-
-        // Dates
-        if (mime.Date != DateTimeOffset.MinValue)
-        {
-            msg["sentDateTime"] = mime.Date.UtcDateTime.ToString("o");
-            msg["receivedDateTime"] = mime.Date.UtcDateTime.ToString("o");
-        }
-
-        // From
-        if (mime.From.Mailboxes.Any())
-        {
-            var from = mime.From.Mailboxes.First();
-            msg["from"] = new { emailAddress = new { name = from.Name ?? from.Address, address = from.Address } };
-            msg["sender"] = msg["from"];
-        }
-
-        // To
-        if (mime.To.Mailboxes.Any())
-            msg["toRecipients"] = mime.To.Mailboxes.Select(m =>
-                new { emailAddress = new { name = m.Name ?? m.Address, address = m.Address } }).ToArray();
-
-        // Cc
-        if (mime.Cc.Mailboxes.Any())
-            msg["ccRecipients"] = mime.Cc.Mailboxes.Select(m =>
-                new { emailAddress = new { name = m.Name ?? m.Address, address = m.Address } }).ToArray();
-
-        // Bcc
-        if (mime.Bcc.Mailboxes.Any())
-            msg["bccRecipients"] = mime.Bcc.Mailboxes.Select(m =>
-                new { emailAddress = new { name = m.Name ?? m.Address, address = m.Address } }).ToArray();
-
-        // Importance
-        msg["importance"] = mime.Importance switch
-        {
-            MimeKit.MessageImportance.High => "high",
-            MimeKit.MessageImportance.Low => "low",
-            _ => "normal"
-        };
-
-        // MAPI extended properties — override Exchange-level message flags and dates.
-        // PR_MESSAGE_FLAGS (0x0E07): Value 1 = MSGFLAG_READ, omitting MSGFLAG_UNSENT (8) prevents draft status.
-        // PR_CLIENT_SUBMIT_TIME (0x0039): Original sent date.
-        // PR_MESSAGE_DELIVERY_TIME (0x0E06): Original received/delivery date.
-        var extendedProps = new List<object>
-        {
-            new { id = "Integer 0x0E07", value = "1" }
-        };
-
-        if (mime.Date != DateTimeOffset.MinValue)
-        {
-            var isoDate = mime.Date.UtcDateTime.ToString("o");
-            extendedProps.Add(new { id = "SystemTime 0x0039", value = isoDate });
-            extendedProps.Add(new { id = "SystemTime 0x0E06", value = isoDate });
-        }
-
-        msg["singleValueExtendedProperties"] = extendedProps;
-
-        // Attachments
-        var attachments = new List<Dictionary<string, object?>>();
-        foreach (var attachment in mime.Attachments)
-        {
-            if (attachment is MimeKit.MimePart part)
-            {
-                using var ms = new MemoryStream();
-                part.Content.DecodeTo(ms);
-                var bytes = ms.ToArray();
-
-                attachments.Add(new Dictionary<string, object?>
-                {
-                    ["@odata.type"] = "#microsoft.graph.fileAttachment",
-                    ["name"] = part.FileName ?? "attachment",
-                    ["contentType"] = part.ContentType.MimeType,
-                    ["contentBytes"] = Convert.ToBase64String(bytes)
-                });
-            }
-        }
-
-        if (attachments.Count > 0)
-            msg["attachments"] = attachments;
-
-        return msg;
-    }
-
     private string? ValidatePreconditions(MigrationJob job, Project project)
     {
         if (!job.MigrationOptionsConfigured)
@@ -591,8 +548,8 @@ public class MigrationEngine : IMigrationEngine
     {
         var result = new Dictionary<string, IList<UniqueId>>();
 
-        using var client = CreateImapClient();
-        await ConnectAndAuthenticate(client, job, project, ct);
+        using var client = MigrationHelpers.CreateImapClient();
+        await MigrationHelpers.ConnectAndAuthenticate(client, job, project, _encryptor, _oauthProvider, _logger, ct);
 
         foreach (var mapping in mappings)
         {
@@ -649,70 +606,6 @@ public class MigrationEngine : IMigrationEngine
         return query;
     }
 
-    private async Task ConnectAndAuthenticate(ImapClient client, MigrationJob job, Project project, CancellationToken ct)
-    {
-        if (project.SourceConnectorType == SourceConnectorType.GoogleWorkspace && !job.HasImapOverride)
-        {
-            // Google Workspace: service account impersonation
-            var gws = project.GoogleWorkspaceSettings!;
-            var privateKey = _encryptor.Decrypt(gws.EncryptedPrivateKey!);
-            var credential = new ServiceAccountCredential(
-                new ServiceAccountCredential.Initializer(gws.ServiceAccountEmail)
-                {
-                    Scopes = ["https://mail.google.com/"],
-                    User = job.SourceEmail
-                }.FromPrivateKey(privateKey));
-
-            await credential.RequestAccessTokenAsync(ct);
-            var accessToken = credential.Token.AccessToken;
-
-            await ConnectImapClient(client, "imap.gmail.com", 993, SecureSocketOptions.SslOnConnect, ct);
-
-            var oauth2 = new SaslMechanismOAuth2(job.SourceEmail, accessToken);
-            await client.AuthenticateAsync(oauth2, ct);
-        }
-        else
-        {
-            // Manual IMAP (or IMAP override)
-            var imap = job.ImapSettings!;
-            var socketOptions = MapEncryption(imap.Encryption);
-
-            await ConnectImapClient(client, imap.Host, imap.Port, socketOptions, ct);
-
-            if (imap.AuthType == ImapAuthType.OAuth2)
-            {
-                var accessToken = await _oauthProvider.GetAccessTokenAsync(imap);
-                var oauth2 = new SaslMechanismOAuth2(imap.Username ?? string.Empty, accessToken);
-                await client.AuthenticateAsync(oauth2, ct);
-            }
-            else
-            {
-                var password = _encryptor.Decrypt(imap.EncryptedPassword!);
-                await client.AuthenticateAsync(imap.Username ?? string.Empty, password, ct);
-            }
-        }
-    }
-
-    private async Task ConnectImapClient(ImapClient client, string host, int port, SecureSocketOptions socketOptions, CancellationToken ct)
-    {
-        try
-        {
-            await client.ConnectAsync(host, port, socketOptions, ct);
-        }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
-        {
-            _logger.LogWarning(ex, "Primary IMAP connection failed to {Host}:{Port}, attempting IPv4 fallback", host, port);
-
-            var addresses = await Dns.GetHostAddressesAsync(host, ct);
-            var ipv4 = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
-                ?? throw new InvalidOperationException($"No IPv4 address found for {host}");
-
-            var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            await socket.ConnectAsync(ipv4, port, ct);
-            await client.ConnectAsync(socket, host, port, socketOptions, ct);
-        }
-    }
-
     private async Task SetJobFailed(MigrationJob job, string errorMessage)
     {
         job.Status = MigrationJobStatus.Failed;
@@ -722,22 +615,4 @@ public class MigrationEngine : IMigrationEngine
         _logger.LogError("Job {JobId}: Failed — {Error}", job.Id, errorMessage);
     }
 
-    private static ImapClient CreateImapClient()
-    {
-        var client = new ImapClient();
-        client.ServerCertificateValidationCallback = (_, _, _, _) => true;
-        client.CheckCertificateRevocation = false;
-        client.SslProtocols = System.Security.Authentication.SslProtocols.Tls12
-                            | System.Security.Authentication.SslProtocols.Tls13;
-        return client;
-    }
-
-    private static SecureSocketOptions MapEncryption(ImapEncryption encryption) => encryption switch
-    {
-        ImapEncryption.SSL => SecureSocketOptions.SslOnConnect,
-        ImapEncryption.TLS => SecureSocketOptions.SslOnConnect,
-        ImapEncryption.STARTTLS => SecureSocketOptions.StartTls,
-        ImapEncryption.None => SecureSocketOptions.None,
-        _ => SecureSocketOptions.Auto
-    };
 }

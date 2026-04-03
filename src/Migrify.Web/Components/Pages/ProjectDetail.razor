@@ -329,8 +329,8 @@ else
                     }
                     @if (context.Status != MigrationJobStatus.Running)
                     {
-                        <MudTooltip Text="@GetStartBlockReason(context)">
-                            <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="Size.Small"
+                        <MudTooltip Text="@(IsResumable(context) && CanStartMigration(context) ? "Resume Migration" : GetStartBlockReason(context))">
+                            <MudIconButton Icon="@(IsResumable(context) ? Icons.Material.Filled.PlayCircle : Icons.Material.Filled.PlayArrow)" Size="Size.Small"
                                            Color="Color.Success"
                                            Disabled="@(!CanStartMigration(context))"
                                            OnClick="@(() => StartMigration(context))" />
@@ -694,6 +694,10 @@ else
         _ => Color.Default
     };
 
+    private static bool IsResumable(MigrationJob job) =>
+        job.FolderMappings.Any(m => m.LastProcessedUid.HasValue)
+        && job.Status is MigrationJobStatus.Failed or MigrationJobStatus.Cancelled;
+
     private bool CanStartMigration(MigrationJob job)
     {
         return job.FolderMappings.Any()
@@ -735,6 +739,8 @@ else
 
     private async Task StartMigration(MigrationJob job)
     {
+        var isResume = IsResumable(job);
+
         // Set status immediately so UI reflects the change
         job.Status = MigrationJobStatus.Running;
         job.ProcessedMessages = 0;
@@ -742,11 +748,13 @@ else
         job.SkippedMessages = 0;
         job.DuplicateMessages = 0;
         job.ErrorMessage = null;
-        job.CurrentFolder = "Starting...";
+        job.CurrentFolder = isResume ? "Resuming..." : "Starting...";
         await JobRepository.UpdateAsync(job);
 
         await MigrationQueue.EnqueueAsync(job.Id);
-        Snackbar.Add($"Migration started for {job.SourceEmail}.", Severity.Success);
+        Snackbar.Add(isResume
+            ? $"Resuming migration for {job.SourceEmail}."
+            : $"Migration started for {job.SourceEmail}.", Severity.Success);
         StateHasChanged();
     }
 

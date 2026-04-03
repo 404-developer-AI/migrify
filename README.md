@@ -31,6 +31,9 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Per-mail error & skip logging with searchable log pages
 - Project-level and job-level log views with type filtering
 - Real-time log updates via SignalR during active migrations
+- Per-mail retry and bulk retry for failed messages
+- Automatic retry with exponential backoff for transient errors (429/503/504/408)
+- Resume interrupted migrations from checkpoint (skips already-processed messages)
 - Clean admin dashboard with premium UI (thanks MudBlazor)
 
 ## Tech Stack
@@ -49,7 +52,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 
 **Work in progress.** But the kind of progress where emails actually migrate now. The foundation is there, the walls are up, and the roof is... getting there. Still wouldn't host a dinner party though.
 
-Current version: `v0.0.11`
+Current version: `v0.0.12`
 
 The version numbering starts at 0.0.1 because even 1.0 feels too optimistic right now.
 
@@ -59,7 +62,7 @@ Technically? Yes. Small migrations are actually working. Should you trust your 5
 
 ## Roadmap
 
-There is one. It's ambitious. It currently involves retry logic, parallel migrations, and eventually Docker deployment. The email migration part? That's actually done. And now you can actually see what went wrong. Wild.
+There is one. It's ambitious. It currently involves parallel migrations, incremental sync, and eventually Docker deployment. The email migration part? That's actually done. Failed mails can be retried, and interrupted migrations can be resumed. Wild.
 
 ## License
 

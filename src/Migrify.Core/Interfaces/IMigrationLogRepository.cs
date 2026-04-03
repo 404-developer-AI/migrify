@@ -14,4 +14,7 @@ public interface IMigrationLogRepository
         MigrationLogType? typeFilter = null, string? searchText = null);
     Task<Dictionary<MigrationLogType, int>> GetCountsByJobIdAsync(Guid jobId);
     Task<Dictionary<MigrationLogType, int>> GetCountsByProjectIdAsync(Guid projectId);
+    Task<MigrationLog?> GetByIdAsync(Guid logId);
+    Task UpdateAsync(MigrationLog log);
+    Task<List<MigrationLog>> GetUnretriedErrorsByJobIdAsync(Guid jobId);
 }

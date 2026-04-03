@@ -146,9 +146,12 @@ public class ApplicationDbContext : IdentityDbContext
             entity.Property(e => e.Subject).HasMaxLength(500);
             entity.Property(e => e.SourceFolder).HasMaxLength(500);
             entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
+            entity.Property(e => e.InternetMessageId).HasMaxLength(500);
+            entity.Property(e => e.DestinationFolderId).HasMaxLength(200);
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
 
             entity.HasIndex(e => new { e.MigrationJobId, e.Type });
+            entity.HasIndex(e => new { e.MigrationJobId, e.InternetMessageId });
             entity.HasIndex(e => e.CreatedAt);
 
             entity.HasOne(e => e.MigrationJob)

@@ -7,6 +7,7 @@ public class FolderMapping
     public string SourceFolderName { get; set; } = string.Empty;
     public string DestinationFolderId { get; set; } = string.Empty;
     public string DestinationFolderDisplayName { get; set; } = string.Empty;
+    public uint? LastProcessedUid { get; set; }
     public DateTime CreatedAt { get; set; }
 
     public MigrationJob MigrationJob { get; set; } = null!;

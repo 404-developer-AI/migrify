@@ -12,6 +12,11 @@ public class MigrationLog
     public string? SourceFolder { get; set; }
     public string? ErrorMessage { get; set; }
 
+    // Retry & resume fields (null for Summary/Skipped entries)
+    public string? InternetMessageId { get; set; }
+    public uint? SourceUid { get; set; }
+    public string? DestinationFolderId { get; set; }
+
     // Summary fields (null for Error/Skipped entries)
     public int? TotalProcessed { get; set; }
     public int? TotalFailed { get; set; }

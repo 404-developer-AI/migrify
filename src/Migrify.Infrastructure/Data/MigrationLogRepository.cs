@@ -90,6 +90,25 @@ public class MigrationLogRepository : IMigrationLogRepository
             .ToDictionaryAsync(g => g.Key, g => g.Count());
     }
 
+    public async Task<MigrationLog?> GetByIdAsync(Guid logId)
+    {
+        return await _db.MigrationLogs.FindAsync(logId);
+    }
+
+    public async Task UpdateAsync(MigrationLog log)
+    {
+        _db.MigrationLogs.Update(log);
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<List<MigrationLog>> GetUnretriedErrorsByJobIdAsync(Guid jobId)
+    {
+        return await _db.MigrationLogs
+            .Where(l => l.MigrationJobId == jobId && l.Type == MigrationLogType.Error)
+            .OrderBy(l => l.CreatedAt)
+            .ToListAsync();
+    }
+
     private static IQueryable<MigrationLog> ApplyFilters(
         IQueryable<MigrationLog> query,
         MigrationLogType? typeFilter, string? searchText)

@@ -2,6 +2,8 @@
 @attribute [Authorize]
 @inject IMigrationLogRepository LogRepository
 @inject IProjectRepository ProjectRepository
+@inject IMigrationRetryService RetryService
+@inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
 @implements IAsyncDisposable
 
@@ -46,6 +48,10 @@ else
                  OnClick="() => SetTypeFilter(MigrationLogType.Summary)" Size="Size.Small">
             Summary (@_countSummary)
         </MudChip>
+        <MudChip T="string" Color="@(_typeFilter == MigrationLogType.Retried ? Color.Success : Color.Default)"
+                 OnClick="() => SetTypeFilter(MigrationLogType.Retried)" Size="Size.Small">
+            Retried (@_countRetried)
+        </MudChip>
 
         <MudSpacer />
 
@@ -65,6 +71,7 @@ else
             <MudTh>Date</MudTh>
             <MudTh>Source Folder</MudTh>
             <MudTh>Details</MudTh>
+            <MudTh Style="width: 80px;">Actions</MudTh>
         </HeaderContent>
         <RowTemplate>
             @if (context.Type == MigrationLogType.Summary)
@@ -78,7 +85,7 @@ else
                         @(context.MigrationJob?.SourceEmail ?? "—")
                     </MudLink>
                 </MudTd>
-                <MudTd DataLabel="Subject" colspan="4">
+                <MudTd DataLabel="Subject" colspan="5">
                     <MudText Typo="Typo.body2">
                         @context.TotalProcessed processed, @context.TotalFailed failed,
                         @context.TotalSkipped skipped, @context.TotalDuplicates duplicates
@@ -88,10 +95,17 @@ else
             else
             {
                 <MudTd DataLabel="Type">
-                    <MudChip T="string" Size="Size.Small"
-                             Color="@(context.Type == MigrationLogType.Error ? Color.Error : Color.Warning)">
-                        @context.Type
-                    </MudChip>
+                    @if (context.Type == MigrationLogType.Retried)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success">Retried</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small"
+                                 Color="@(context.Type == MigrationLogType.Error ? Color.Error : Color.Warning)">
+                            @context.Type
+                        </MudChip>
+                    }
                 </MudTd>
                 <MudTd DataLabel="Job">
                     <MudLink Href="@($"/projects/{ProjectId}/jobs/{context.MigrationJobId}/logs")"
@@ -115,6 +129,32 @@ else
                             <MudText Typo="Typo.body2" Style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                                 @context.ErrorMessage
                             </MudText>
+                        </MudTooltip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Actions">
+                    @if (context.Type == MigrationLogType.Error)
+                    {
+                        @if (context.SourceUid is not null && !string.IsNullOrEmpty(context.DestinationFolderId))
+                        {
+                            <MudTooltip Text="Retry this message">
+                                <MudIconButton Icon="@Icons.Material.Filled.Replay" Size="Size.Small"
+                                               Color="Color.Primary"
+                                               Disabled="@(_retryingLogIds.Contains(context.Id))"
+                                               OnClick="@(() => RetryMessage(context))" />
+                            </MudTooltip>
+                        }
+                        else
+                        {
+                            <MudTooltip Text="Retry not available (pre-v0.0.12 log)">
+                                <MudIcon Icon="@Icons.Material.Filled.Replay" Size="Size.Small" Color="Color.Default" />
+                            </MudTooltip>
+                        }
+                    }
+                    else if (context.Type == MigrationLogType.Retried)
+                    {
+                        <MudTooltip Text="Successfully retried">
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Color="Color.Success" />
                         </MudTooltip>
                     }
                 </MudTd>
@@ -142,7 +182,10 @@ else
     private int _countError;
     private int _countSkipped;
     private int _countSummary;
+    private int _countRetried;
     private int _totalAll;
+
+    private HashSet<Guid> _retryingLogIds = new();
 
     private List<BreadcrumbItem> _breadcrumbs = new();
 
@@ -171,7 +214,8 @@ else
         _countError = counts.GetValueOrDefault(MigrationLogType.Error);
         _countSkipped = counts.GetValueOrDefault(MigrationLogType.Skipped);
         _countSummary = counts.GetValueOrDefault(MigrationLogType.Summary);
-        _totalAll = _countError + _countSkipped + _countSummary;
+        _countRetried = counts.GetValueOrDefault(MigrationLogType.Retried);
+        _totalAll = _countError + _countSkipped + _countSummary + _countRetried;
     }
 
     private async Task<TableData<MigrationLog>> LoadLogs(TableState state, CancellationToken ct)
@@ -195,6 +239,33 @@ else
             await _table.ReloadServerData();
     }
 
+    private async Task RetryMessage(MigrationLog log)
+    {
+        _retryingLogIds.Add(log.Id);
+        StateHasChanged();
+
+        try
+        {
+            var success = await RetryService.RetryAsync(log.Id);
+            if (success)
+                Snackbar.Add($"Successfully retried: {log.Subject ?? "message"}", Severity.Success);
+            else
+                Snackbar.Add($"Retry failed for: {log.Subject ?? "message"}", Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Retry error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _retryingLogIds.Remove(log.Id);
+            await LoadCounts();
+            if (_table is not null)
+                await _table.ReloadServerData();
+            StateHasChanged();
+        }
+    }
+
     private async Task SetupSignalR()
     {
         _hubConnection = new HubConnectionBuilder()
@@ -216,6 +287,18 @@ else
 
         _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted",
             async (jobId, processed, total, failed, skipped, errorMessage) =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadCounts();
+                    if (_table is not null)
+                        await _table.ReloadServerData();
+                    StateHasChanged();
+                });
+            });
+
+        _hubConnection.On<Guid, Guid, bool>("ReceiveRetryResult",
+            async (jobId, logId, success) =>
             {
                 await InvokeAsync(async () =>
                 {

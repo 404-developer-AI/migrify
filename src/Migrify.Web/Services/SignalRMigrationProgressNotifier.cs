@@ -50,4 +50,10 @@ public class SignalRMigrationProgressNotifier : IMigrationProgressNotifier
         await _hubContext.Clients.Group($"project-{projectId}")
             .SendAsync("ReceiveLogEntry", jobId, type, subject, sourceFolder, errorMessage);
     }
+
+    public async Task SendRetryResultAsync(Guid projectId, Guid jobId, Guid logId, bool success)
+    {
+        await _hubContext.Clients.Group($"project-{projectId}")
+            .SendAsync("ReceiveRetryResult", jobId, logId, success);
+    }
 }
