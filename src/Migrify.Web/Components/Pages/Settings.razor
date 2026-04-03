@@ -1,17 +1,212 @@
 @page "/settings"
 @attribute [Authorize]
+@using Migrify.Core.Interfaces
+@using Migrify.Core.Entities
+@using Migrify.Infrastructure.Services
+@inject IConcurrencyLimitService LimitService
+@inject IAppSettingsService AppSettings
+@inject SystemResourceMonitor ResourceMonitor
+@inject SourceLimitProvider SourceLimitProvider
+@inject ISnackbar Snackbar
 
 <PageTitle>Settings - Migrify</PageTitle>
 
 <MudText Typo="Typo.h4" Class="page-title mb-6">Settings</MudText>
 
-<MudCard Elevation="0">
-    <MudCardContent>
-        <MudAlert Severity="Severity.Info" Class="mb-4">
-            Settings will be available in a future version.
-        </MudAlert>
-        <MudText Typo="Typo.body1" Style="color: var(--mud-palette-text-secondary);">
-            Here you will be able to manage application settings.
-        </MudText>
-    </MudCardContent>
-</MudCard>
+<MudGrid>
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="0">
+            <MudCardHeader>
+                <MudText Typo="Typo.h6">System Resources</MudText>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudSimpleTable Dense="true" Hover="true" Bordered="false" Striped="false">
+                    <tbody>
+                        <tr>
+                            <td><MudText Typo="Typo.body2">Available Memory</MudText></td>
+                            <td><MudText Typo="Typo.body2"><b>@FormatBytes(ResourceMonitor.GetTotalAvailableMemoryBytes())</b></MudText></td>
+                        </tr>
+                        <tr>
+                            <td><MudText Typo="Typo.body2">CPU Cores</MudText></td>
+                            <td><MudText Typo="Typo.body2"><b>@ResourceMonitor.GetProcessorCount()</b></MudText></td>
+                        </tr>
+                        <tr>
+                            <td><MudText Typo="Typo.body2">Calculated System Limit</MudText></td>
+                            <td><MudText Typo="Typo.body2"><b>@_limits.SystemLimit concurrent jobs</b></MudText></td>
+                        </tr>
+                    </tbody>
+                </MudSimpleTable>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="6">
+        <MudCard Elevation="0">
+            <MudCardHeader>
+                <MudText Typo="Typo.h6">Default Limits</MudText>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudSimpleTable Dense="true" Hover="true" Bordered="false" Striped="false">
+                    <tbody>
+                        <tr>
+                            <td><MudText Typo="Typo.body2">Per M365 Tenant</MudText></td>
+                            <td><MudText Typo="Typo.body2"><b>@_limits.DestinationLimit concurrent jobs</b></MudText></td>
+                        </tr>
+                        <tr>
+                            <td><MudText Typo="Typo.body2">Gmail / Google Workspace</MudText></td>
+                            <td><MudText Typo="Typo.body2"><b>15 concurrent jobs</b></MudText></td>
+                        </tr>
+                        <tr>
+                            <td><MudText Typo="Typo.body2">Outlook.com</MudText></td>
+                            <td><MudText Typo="Typo.body2"><b>10 concurrent jobs</b></MudText></td>
+                        </tr>
+                        <tr>
+                            <td><MudText Typo="Typo.body2">Unknown IMAP Servers</MudText></td>
+                            <td><MudText Typo="Typo.body2"><b>@_limits.SourceLimit concurrent jobs</b></MudText></td>
+                        </tr>
+                    </tbody>
+                </MudSimpleTable>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudCard Elevation="0">
+            <MudCardHeader>
+                <MudText Typo="Typo.h6">Manual Overrides</MudText>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Typo="Typo.body2" Class="mb-4" Style="color: var(--mud-palette-text-secondary);">
+                    Override the calculated limits. Leave empty to use the automatically calculated values.
+                </MudText>
+
+                @if (_showOverrideWarning)
+                {
+                    <MudAlert Severity="Severity.Warning" Class="mb-4">
+                        One or more overrides exceed the calculated safe limit. This may cause API throttling or resource exhaustion.
+                    </MudAlert>
+                }
+
+                <MudGrid>
+                    <MudItem xs="12" sm="4">
+                        <MudNumericField @bind-Value="_overrideMax"
+                                         Label="Global Max Concurrent Jobs"
+                                         Variant="Variant.Outlined"
+                                         Min="1"
+                                         Clearable="true"
+                                         HelperText="@($"Calculated: {_limits.SystemLimit}")" />
+                    </MudItem>
+                    <MudItem xs="12" sm="4">
+                        <MudNumericField @bind-Value="_overridePerTenant"
+                                         Label="Max Per M365 Tenant"
+                                         Variant="Variant.Outlined"
+                                         Min="1"
+                                         Clearable="true"
+                                         HelperText="@($"Default: {_limits.DestinationLimit}")" />
+                    </MudItem>
+                    <MudItem xs="12" sm="4">
+                        <MudNumericField @bind-Value="_overridePerSource"
+                                         Label="Max Per Source Server"
+                                         Variant="Variant.Outlined"
+                                         Min="1"
+                                         Clearable="true"
+                                         HelperText="@($"Default: {_limits.SourceLimit} (unknown servers)")" />
+                    </MudItem>
+                </MudGrid>
+
+                <div class="mt-4">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveOverrides" Disabled="_saving">
+                        @if (_saving)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        Save
+                    </MudButton>
+                </div>
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private ConcurrencyLimits _limits = new(0, 0, 0, 0, false, null);
+    private int? _overrideMax;
+    private int? _overridePerTenant;
+    private int? _overridePerSource;
+    private bool _saving;
+    private bool _showOverrideWarning;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _limits = LimitService.GetCurrentLimits();
+
+        _overrideMax = AppSettings.GetConcurrencyOverrideMax();
+        _overridePerTenant = AppSettings.GetConcurrencyOverridePerTenant();
+        _overridePerSource = AppSettings.GetConcurrencyOverridePerSource();
+
+        CheckOverrideWarning();
+
+        // Ensure settings are loaded from DB
+        await AppSettings.GetAllAsync();
+
+        _overrideMax = AppSettings.GetConcurrencyOverrideMax();
+        _overridePerTenant = AppSettings.GetConcurrencyOverridePerTenant();
+        _overridePerSource = AppSettings.GetConcurrencyOverridePerSource();
+
+        CheckOverrideWarning();
+    }
+
+    private void CheckOverrideWarning()
+    {
+        _showOverrideWarning =
+            (_overrideMax.HasValue && _overrideMax.Value > _limits.SystemLimit) ||
+            (_overridePerTenant.HasValue && _overridePerTenant.Value > _limits.DestinationLimit) ||
+            (_overridePerSource.HasValue && _overridePerSource.Value > _limits.SourceLimit);
+    }
+
+    private async Task SaveOverrides()
+    {
+        _saving = true;
+
+        try
+        {
+            if (_overrideMax.HasValue)
+                await AppSettings.SetAsync(AppSettingKeys.ConcurrencyOverrideMax, _overrideMax.Value.ToString());
+            else
+                await AppSettings.DeleteAsync(AppSettingKeys.ConcurrencyOverrideMax);
+
+            if (_overridePerTenant.HasValue)
+                await AppSettings.SetAsync(AppSettingKeys.ConcurrencyOverridePerTenant, _overridePerTenant.Value.ToString());
+            else
+                await AppSettings.DeleteAsync(AppSettingKeys.ConcurrencyOverridePerTenant);
+
+            if (_overridePerSource.HasValue)
+                await AppSettings.SetAsync(AppSettingKeys.ConcurrencyOverridePerSource, _overridePerSource.Value.ToString());
+            else
+                await AppSettings.DeleteAsync(AppSettingKeys.ConcurrencyOverridePerSource);
+
+            LimitService.RefreshSystemLimits();
+            _limits = LimitService.GetCurrentLimits();
+            CheckOverrideWarning();
+
+            Snackbar.Add("Settings saved successfully", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to save settings: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1024L * 1024 * 1024)
+            return $"{bytes / (1024.0 * 1024 * 1024):F1} GB";
+        if (bytes >= 1024L * 1024)
+            return $"{bytes / (1024.0 * 1024):F0} MB";
+        return $"{bytes / 1024.0:F0} KB";
+    }
+}

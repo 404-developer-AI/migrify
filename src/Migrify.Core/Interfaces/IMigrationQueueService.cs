@@ -1,3 +1,5 @@
+using Migrify.Core.Models;
+
 namespace Migrify.Core.Interfaces;
 
 public interface IMigrationQueueService
@@ -8,4 +10,10 @@ public interface IMigrationQueueService
     bool IsRunning(Guid jobId);
     bool IsQueued(Guid jobId);
     bool TryCancelQueued(Guid jobId);
+
+    // Metadata tracking for concurrency limits
+    void RegisterJobMetadata(Guid jobId, RunningJobInfo info);
+    IReadOnlyList<RunningJobInfo> GetRunningJobInfos();
+    int CountRunningByTenant(string tenantId);
+    int CountRunningBySource(string sourceKey);
 }

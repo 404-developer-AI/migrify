@@ -20,6 +20,7 @@ public class ApplicationDbContext : IdentityDbContext
     public DbSet<DiscoveredMailbox> DiscoveredMailboxes => Set<DiscoveredMailbox>();
     public DbSet<FolderMapping> FolderMappings => Set<FolderMapping>();
     public DbSet<MigrationLog> MigrationLogs => Set<MigrationLog>();
+    public DbSet<AppSettings> AppSettings => Set<AppSettings>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -158,6 +159,15 @@ public class ApplicationDbContext : IdentityDbContext
                 .WithMany(j => j.MigrationLogs)
                 .HasForeignKey(e => e.MigrationJobId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<AppSettings>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.Key).IsUnique();
+            entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Value).IsRequired().HasMaxLength(1000);
+            entity.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");
         });
 
         builder.Entity<ImapProviderPreset>(entity =>

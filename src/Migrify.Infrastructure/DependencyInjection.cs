@@ -49,6 +49,13 @@ public static class DependencyInjection
         services.AddTransient<IMigrationEngine, MigrationEngine>();
         services.AddHostedService<MigrationBackgroundService>();
 
+        // Concurrency limit services
+        services.AddSingleton<SystemResourceMonitor>();
+        services.AddSingleton<SourceLimitProvider>();
+        services.AddSingleton<DestinationLimitProvider>();
+        services.AddSingleton<IAppSettingsService, AppSettingsService>();
+        services.AddSingleton<IConcurrencyLimitService, ConcurrencyLimitService>();
+
         return services;
     }
 }

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Migrify.Core.Interfaces;
+using Migrify.Core.Models;
 
 namespace Migrify.Infrastructure.Services;
 
@@ -8,6 +9,7 @@ public class MigrationQueueService : IMigrationQueueService
 {
     private readonly Channel<Guid> _queue = Channel.CreateUnbounded<Guid>();
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _runningJobs = new();
+    private readonly ConcurrentDictionary<Guid, RunningJobInfo> _runningJobInfos = new();
     private readonly ConcurrentDictionary<Guid, bool> _queuedJobs = new();
     private readonly ConcurrentDictionary<Guid, bool> _cancelledFromQueue = new();
 
@@ -72,5 +74,28 @@ public class MigrationQueueService : IMigrationQueueService
         {
             cts.Dispose();
         }
+        _runningJobInfos.TryRemove(jobId, out _);
+    }
+
+    public void RegisterJobMetadata(Guid jobId, RunningJobInfo info)
+    {
+        _runningJobInfos[jobId] = info;
+    }
+
+    public IReadOnlyList<RunningJobInfo> GetRunningJobInfos()
+    {
+        return _runningJobInfos.Values.ToList();
+    }
+
+    public int CountRunningByTenant(string tenantId)
+    {
+        return _runningJobInfos.Values.Count(x =>
+            string.Equals(x.TenantId, tenantId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public int CountRunningBySource(string sourceKey)
+    {
+        return _runningJobInfos.Values.Count(x =>
+            string.Equals(x.SourceKey, sourceKey, StringComparison.OrdinalIgnoreCase));
     }
 }
