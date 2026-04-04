@@ -36,6 +36,20 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Searchable migration logs at project and job level with type filtering
 - Premium dark/light UI with MudBlazor
 
+## Screenshots
+
+![Dashboard](docs/screenshots/Dashboard.jpg)
+*Dashboard — project overview, concurrency limits, and cross-project job status*
+
+![Migration Jobs](docs/screenshots/Migration%20Jobs.jpg)
+*Project detail — connector configuration, concurrency limits, and migration jobs with bulk start*
+
+![Logs](docs/screenshots/Logs.jpg)
+*Migration logs — filterable by type, searchable, with per-mail details*
+
+![Settings](docs/screenshots/Settings.jpg)
+*Settings — system resources, provider limits, and manual concurrency overrides*
+
 ## Tech Stack
 
 | Layer | Tech |
