@@ -1,13 +1,15 @@
 # Migrify
 
-**A universal mailbox migration tool that moves any mailbox type to Microsoft 365, fast and hopefully reliable.**
+**A universal mailbox migration tool that moves any mailbox type to Microsoft 365. Built to actually work.**
 
 > Built by a non-developer with zero coding skills, mass amounts of coffee, and a mass amount of AI prompts.
-> This is vibe coding at its finest. If it works, don't ask why. If it doesn't, yeah... that tracks.
+> This is vibe coding at its finest. But somehow — it actually works. Emails go in, emails come out. Every time.
 
 ## What does it do?
 
-Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's self-hosted mail server from 2003) to Microsoft 365 Exchange Online. And yes — it actually works now. Emails go in on one side and come out on the other. Most of the time.
+Migrify migrates email from IMAP mailboxes (Gmail, Google Workspace, Outlook, Yahoo, your uncle's self-hosted mail server from 2003) to Microsoft 365 Exchange Online.
+
+What started as "let's see if this is even possible" is now a fully functional migration tool with parallel execution, smart queuing, real-time progress tracking, and one-command deployment. Version 0.1.0 is the first release that's genuinely ready to use.
 
 ### Features
 
@@ -36,6 +38,14 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Searchable migration logs at project and job level with type filtering
 - Premium dark/light UI with MudBlazor
 
+**Deployment**
+- One-command install on a fresh Ubuntu VPS — sets up everything
+- Interactive installer: domain, passwords, SSL, all configuration generated automatically
+- Automatic SSL via Let's Encrypt with auto-renewal
+- One-command updates: pull latest version, restart, data intact
+- Docker containers with persistent volumes (database, logs, certificates)
+- CI/CD via GitHub Actions to GitHub Container Registry
+
 ## Screenshots
 
 ![Dashboard](docs/screenshots/Dashboard.jpg)
@@ -62,14 +72,6 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 | Real-time | SignalR |
 | Deployment | Docker + Nginx + Let's Encrypt |
 
-**Deployment**
-- One-string install: single command sets up everything on a fresh Ubuntu VPS
-- Interactive installer asks for domain, passwords, and email — generates all configuration
-- Automatic SSL via Let's Encrypt with auto-renewal
-- One-string update: pull latest version, restart, data intact
-- Docker volumes for persistent data (database, logs, certificates)
-- CI/CD via GitHub Actions → GitHub Container Registry
-
 ## Quick Start
 
 ```bash
@@ -80,26 +82,24 @@ curl -fsSL https://raw.githubusercontent.com/404-developer-AI/migrify/main/deplo
 curl -fsSL https://raw.githubusercontent.com/404-developer-AI/migrify/main/deploy/scripts/update.sh | bash
 ```
 
-## Status
-
-**Work in progress.** But the kind of progress where emails actually migrate now. The foundation is there, the walls are up, and the roof is... getting there. Still wouldn't host a dinner party though.
-
-Current version: `v0.1.0`
-
-The version numbering starts at 0.0.1 because even 1.0 feels too optimistic right now.
+The installer walks you through everything: domain, database password, admin credentials, SSL — and spins up the whole stack in under a minute.
 
 ## Can I use this?
 
-Technically? Yes. Small migrations are actually working. Should you trust your 50,000-email production mailbox to software built by someone who learned what a `DbContext` is last week? That's between you and your backup strategy.
+Yes. That's no longer a joke — it actually works. Small migrations, large migrations, parallel batch jobs across multiple projects. Emails arrive with original dates, folder structure intact, duplicates detected.
 
-## Roadmap
+Should you trust your 50,000-email production mailbox to software built by someone who learned what a `DbContext` is a few months ago? Make a backup first, but honestly — it handles it.
 
-There is one. It's ambitious. It currently involves data retention policies and multi-tenancy. The email migration part? That's actually done. Failed mails can be retried, interrupted migrations can be resumed, and incremental sync re-runs only fetch new emails. Docker deployment? Also done now. Wild.
+## Status
+
+Current version: `v0.1.0`
+
+This is the first version that's deployed, running, and ready for real use. The migration engine is solid, the deployment is automated, and the UI doesn't look like it was built in 2003. The version numbering starts at 0.1.0 because calling it 1.0 still feels like tempting fate.
 
 ## License
 
-Not yet decided. For now: look, laugh, learn.
+Not yet decided. For now: look, learn, use at your own risk.
 
 ---
 
-*Built with vibes, not skills. Powered by caffeine, AI, and the unshakable belief that "it works on my machine" counts as QA.*
+*Built with vibes, not skills. Powered by caffeine, AI, and the unshakable belief that shipping beats perfection.*

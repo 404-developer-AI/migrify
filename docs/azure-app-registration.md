@@ -47,13 +47,13 @@ This guide explains how to configure an Azure AD app registration so Migrify can
 ## Step 4: Configure in Migrify
 
 1. Open your project in Migrify
-2. Edit a migration job (or create a new one)
-3. Go to the **M365 Destination** tab
-4. Enter:
+2. On the project detail page, click **Configure** on the **Destination Connector** card
+3. Enter:
    - **Tenant ID**: The Directory (tenant) ID from Step 1
    - **Client ID**: The Application (client) ID from Step 1
    - **Client Secret**: The secret value from Step 3
-5. Click **Test Connection** to verify
+4. Click **Test Connection** to verify
+5. Click **Save**
 
 ## Step 5: Verify Permissions
 
