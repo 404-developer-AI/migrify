@@ -17,4 +17,5 @@ public interface IMigrationLogRepository
     Task<MigrationLog?> GetByIdAsync(Guid logId);
     Task UpdateAsync(MigrationLog log);
     Task<List<MigrationLog>> GetUnretriedErrorsByJobIdAsync(Guid jobId);
+    Task<Dictionary<string, HashSet<uint>>> GetFailedAndSkippedUidsByJobIdAsync(Guid jobId);
 }

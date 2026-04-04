@@ -76,9 +76,12 @@ public class MigrationEngine : IMigrationEngine
 
             // Resume detection: check if folder mappings have checkpoint UIDs
             bool isResume = job.FolderMappings.Any(m => m.LastProcessedUid.HasValue);
+            Dictionary<string, HashSet<uint>> retryUids = new();
             if (isResume)
             {
-                _logger.LogInformation("Job {JobId}: Resuming from checkpoint — skipping already-processed UIDs per folder", jobId);
+                // Load UIDs of previously failed/skipped messages so they get re-processed on resume
+                retryUids = await _logRepository.GetFailedAndSkippedUidsByJobIdAsync(job.Id);
+                _logger.LogInformation("Job {JobId}: Resuming from checkpoint — skipping successfully-processed UIDs per folder", jobId);
             }
 
             // Set status to Running, record start time, and reset counters
@@ -135,6 +138,10 @@ public class MigrationEngine : IMigrationEngine
             int duplicateMessages = 0;
             int failedMessages = 0;
 
+            // Single IMAP connection for the entire job — avoids repeated SSL fallback per folder
+            using var imapClient = MigrationHelpers.CreateImapClient();
+            await MigrationHelpers.ConnectAndAuthenticate(imapClient, job, project, _encryptor, _oauthProvider, _logger, cancellationToken);
+
             foreach (var mapping in mappings)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -146,16 +153,18 @@ public class MigrationEngine : IMigrationEngine
                     continue;
                 }
 
-                // Resume: skip UIDs already processed in a previous run
+                // Resume: skip only successfully-processed UIDs; re-process failed/skipped ones
                 IList<UniqueId> uids;
                 if (isResume && mapping.LastProcessedUid.HasValue)
                 {
                     var checkpoint = mapping.LastProcessedUid.Value;
-                    uids = allUids.Where(u => u.Id > checkpoint).ToList();
+                    var folderRetryUids = retryUids.GetValueOrDefault(mapping.SourceFolderName);
+                    uids = allUids.Where(u => u.Id > checkpoint
+                        || (folderRetryUids is not null && folderRetryUids.Contains(u.Id))).ToList();
                     var skippedCount = allUids.Count - uids.Count;
                     if (skippedCount > 0)
                     {
-                        _logger.LogInformation("Job {JobId}: Folder '{Folder}' — skipping {Skipped} already-processed messages (checkpoint UID {Uid})",
+                        _logger.LogInformation("Job {JobId}: Folder '{Folder}' — skipping {Skipped} successfully-processed messages (checkpoint UID {Uid})",
                             jobId, mapping.SourceFolderName, skippedCount, checkpoint);
                         job.ProcessedMessages += skippedCount;
                     }
@@ -174,12 +183,15 @@ public class MigrationEngine : IMigrationEngine
                 _logger.LogInformation("Job {JobId}: Migrating folder '{Folder}' → '{DestFolder}' ({Count} messages)",
                     jobId, mapping.SourceFolderName, mapping.DestinationFolderDisplayName, uids.Count);
 
-                // Connect to IMAP and migrate messages
-                using var imapClient = MigrationHelpers.CreateImapClient();
+                // Reconnect if connection was lost between folders
+                if (!imapClient.IsConnected)
+                {
+                    _logger.LogWarning("Job {JobId}: IMAP connection lost, reconnecting", jobId);
+                    await MigrationHelpers.ConnectAndAuthenticate(imapClient, job, project, _encryptor, _oauthProvider, _logger, cancellationToken);
+                }
+
                 try
                 {
-                    await MigrationHelpers.ConnectAndAuthenticate(imapClient, job, project, _encryptor, _oauthProvider, _logger, cancellationToken);
-
                     var folder = await imapClient.GetFolderAsync(mapping.SourceFolderName, cancellationToken);
                     await folder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
@@ -215,7 +227,8 @@ public class MigrationEngine : IMigrationEngine
                                     Subject = message.Subject,
                                     MessageDate = message.Date != DateTimeOffset.MinValue ? message.Date.UtcDateTime : null,
                                     SourceFolder = mapping.SourceFolderName,
-                                    ErrorMessage = "Outside date filter range"
+                                    ErrorMessage = "Outside date filter range",
+                                    SourceUid = uid.Id
                                 });
                                 await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Skipped", message.Subject, mapping.SourceFolderName, "Outside date filter range");
                                 job.ProcessedMessages++;
@@ -257,7 +270,8 @@ public class MigrationEngine : IMigrationEngine
                                     Subject = message.Subject,
                                     MessageDate = message.Date != DateTimeOffset.MinValue ? message.Date.UtcDateTime : null,
                                     SourceFolder = mapping.SourceFolderName,
-                                    ErrorMessage = $"Size {sizeMb:F1}MB exceeds 4MB limit"
+                                    ErrorMessage = $"Size {sizeMb:F1}MB exceeds 4MB limit",
+                                    SourceUid = uid.Id
                                 });
                                 await _progressNotifier.SendLogEntryAsync(project.Id, job.Id, "Skipped", message.Subject, mapping.SourceFolderName, $"Size {sizeMb:F1}MB exceeds 4MB limit");
                                 job.ProcessedMessages++;
@@ -327,7 +341,6 @@ public class MigrationEngine : IMigrationEngine
                     }
 
                     await folder.CloseAsync(false, cancellationToken);
-                    await imapClient.DisconnectAsync(true, cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -335,20 +348,15 @@ public class MigrationEngine : IMigrationEngine
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Job {JobId}: IMAP error for folder '{Folder}', attempting retry",
+                    _logger.LogError(ex, "Job {JobId}: IMAP error for folder '{Folder}'",
                         jobId, mapping.SourceFolderName);
-
-                    // One retry for IMAP connection errors
-                    try
-                    {
-                        if (imapClient.IsConnected)
-                            await imapClient.DisconnectAsync(true, cancellationToken);
-                    }
-                    catch { /* ignore disconnect errors */ }
-
-                    throw; // Let outer catch handle it
+                    throw;
                 }
             }
+
+            // Disconnect IMAP after all folders are done
+            if (imapClient.IsConnected)
+                await imapClient.DisconnectAsync(true, cancellationToken);
 
             // Flush remaining log buffer
             if (logBuffer.Count > 0)
@@ -455,13 +463,13 @@ public class MigrationEngine : IMigrationEngine
         await _progressNotifier.SendProgressAsync(projectId, job.Id,
             job.ProcessedMessages, job.TotalMessages, job.CurrentFolder, skipped, job.DuplicateMessages);
 
+        // Always update checkpoint in memory (so completion save has the final UID)
+        if (mapping is not null && currentUid.HasValue)
+            mapping.LastProcessedUid = currentUid.Value.Id;
+
         // Persist to DB periodically to reduce DB load
         if (job.ProcessedMessages % DbPersistInterval == 0)
         {
-            // Update checkpoint UID for resume support
-            if (mapping is not null && currentUid.HasValue)
-                mapping.LastProcessedUid = currentUid.Value.Id;
-
             await _jobRepository.UpdateAsync(job);
             if (logBuffer.Count > 0)
             {

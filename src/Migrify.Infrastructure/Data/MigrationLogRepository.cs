@@ -109,6 +109,29 @@ public class MigrationLogRepository : IMigrationLogRepository
             .ToListAsync();
     }
 
+    public async Task<Dictionary<string, HashSet<uint>>> GetFailedAndSkippedUidsByJobIdAsync(Guid jobId)
+    {
+        var logs = await _db.MigrationLogs.AsNoTracking()
+            .Where(l => l.MigrationJobId == jobId
+                && (l.Type == MigrationLogType.Error || l.Type == MigrationLogType.Skipped)
+                && l.SourceUid.HasValue
+                && l.SourceFolder != null)
+            .Select(l => new { l.SourceFolder, l.SourceUid })
+            .ToListAsync();
+
+        var result = new Dictionary<string, HashSet<uint>>();
+        foreach (var log in logs)
+        {
+            if (!result.TryGetValue(log.SourceFolder!, out var set))
+            {
+                set = new HashSet<uint>();
+                result[log.SourceFolder!] = set;
+            }
+            set.Add(log.SourceUid!.Value);
+        }
+        return result;
+    }
+
     private static IQueryable<MigrationLog> ApplyFilters(
         IQueryable<MigrationLog> query,
         MigrationLogType? typeFilter, string? searchText)

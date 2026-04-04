@@ -35,7 +35,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Automatic retry with exponential backoff for transient errors (429/503/504/408)
 - Resume interrupted migrations from checkpoint (skips already-processed messages)
 - Incremental sync: auto-fill date range from last successful run for re-runs
-- Resume or start fresh dialog when re-running jobs with checkpoints
+- Resume or start fresh dialog when re-running jobs with checkpoints (resume re-evaluates skipped/failed messages)
 - Job timing info: start time, end time, and duration visible on status chips
 - Parallel migration engine: multiple jobs run simultaneously
 - Global FIFO queue with Queued status and cancel-from-queue support
@@ -64,7 +64,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 
 **Work in progress.** But the kind of progress where emails actually migrate now. The foundation is there, the walls are up, and the roof is... getting there. Still wouldn't host a dinner party though.
 
-Current version: `v0.0.14c`
+Current version: `v0.0.14d`
 
 The version numbering starts at 0.0.1 because even 1.0 feels too optimistic right now.
 

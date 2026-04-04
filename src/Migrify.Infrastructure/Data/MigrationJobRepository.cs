@@ -65,11 +65,19 @@ public class MigrationJobRepository : IMigrationJobRepository
         var entry = _db.Entry(job);
         if (entry.State == EntityState.Detached)
         {
-            // Detach any already-tracked instance with the same key to avoid conflict
+            // Detach any already-tracked instances to avoid conflicts
             var tracked = _db.ChangeTracker.Entries<MigrationJob>()
                 .FirstOrDefault(e => e.Entity.Id == job.Id);
             if (tracked is not null)
                 tracked.State = EntityState.Detached;
+
+            foreach (var trackedMapping in _db.ChangeTracker.Entries<FolderMapping>()
+                .Where(e => e.Entity.MigrationJobId == job.Id).ToList())
+                trackedMapping.State = EntityState.Detached;
+
+            foreach (var trackedImap in _db.ChangeTracker.Entries<ImapSettings>()
+                .Where(e => e.Entity.MigrationJobId == job.Id).ToList())
+                trackedImap.State = EntityState.Detached;
 
             _db.MigrationJobs.Update(job);
         }
