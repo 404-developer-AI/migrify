@@ -204,6 +204,13 @@ else
             };
 
             await LoadCounts();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _project is not null)
+        {
             await SetupSignalR();
         }
     }

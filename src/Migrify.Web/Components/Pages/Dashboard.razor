@@ -191,7 +191,14 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadData();
-        await SetupSignalR();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await SetupSignalR();
+        }
     }
 
     private async Task SetupSignalR()

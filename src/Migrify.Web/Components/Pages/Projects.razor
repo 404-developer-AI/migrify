@@ -76,7 +76,14 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadProjects();
-        await SetupSignalR();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await SetupSignalR();
+        }
     }
 
     private async Task SetupSignalR()
