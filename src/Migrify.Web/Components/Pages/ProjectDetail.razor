@@ -9,6 +9,7 @@
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
+@inject IConfiguration Configuration
 @inject IMigrationQueueService MigrationQueue
 @inject IConcurrencyLimitService LimitService
 @inject Migrify.Infrastructure.Services.SourceLimitProvider SourceLimitProvider
@@ -449,50 +450,68 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadData();
-        await SetupSignalR();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await SetupSignalR();
+        }
     }
 
     private async Task SetupSignalR()
     {
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/migration-progress"))
-            .WithAutomaticReconnect()
-            .Build();
-
-        _hubConnection.On<Guid, int, int, string?, int, int>("ReceiveProgress", (jobId, processed, total, currentFolder, skipped, duplicates) =>
+        try
         {
-            var job = _jobs.FirstOrDefault(j => j.Id == jobId);
-            if (job is not null)
-            {
-                job.ProcessedMessages = processed;
-                job.TotalMessages = total;
-                job.CurrentFolder = currentFolder;
-                job.SkippedMessages = skipped;
-                job.DuplicateMessages = duplicates;
-                InvokeAsync(StateHasChanged);
-            }
-        });
+            var hubUrl = Configuration.GetValue<bool>("ReverseProxy:Enabled")
+                ? new Uri("http://localhost:8080/hubs/migration-progress")
+                : NavigationManager.ToAbsoluteUri("/hubs/migration-progress");
 
-        _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
-        {
-            await InvokeAsync(async () =>
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(hubUrl)
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.On<Guid, int, int, string?, int, int>("ReceiveProgress", (jobId, processed, total, currentFolder, skipped, duplicates) =>
             {
-                await LoadData();
-                StateHasChanged();
+                var job = _jobs.FirstOrDefault(j => j.Id == jobId);
+                if (job is not null)
+                {
+                    job.ProcessedMessages = processed;
+                    job.TotalMessages = total;
+                    job.CurrentFolder = currentFolder;
+                    job.SkippedMessages = skipped;
+                    job.DuplicateMessages = duplicates;
+                    InvokeAsync(StateHasChanged);
+                }
             });
-        });
 
-        _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
-        {
-            await InvokeAsync(async () =>
+            _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
             {
-                await LoadData();
-                StateHasChanged();
+                await InvokeAsync(async () =>
+                {
+                    await LoadData();
+                    StateHasChanged();
+                });
             });
-        });
 
-        await _hubConnection.StartAsync();
-        await _hubConnection.InvokeAsync("JoinProject", ProjectId);
+            _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadData();
+                    StateHasChanged();
+                });
+            });
+
+            await _hubConnection.StartAsync();
+            await _hubConnection.InvokeAsync("JoinProject", ProjectId);
+        }
+        catch (Exception)
+        {
+            // Hub connection failure should not crash the circuit
+        }
     }
 
     private async Task LoadData()

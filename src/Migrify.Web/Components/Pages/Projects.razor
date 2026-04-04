@@ -4,6 +4,7 @@
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
+@inject IConfiguration Configuration
 @implements IAsyncDisposable
 
 <PageTitle>Projects - Migrify</PageTitle>
@@ -76,36 +77,54 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadProjects();
-        await SetupSignalR();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await SetupSignalR();
+        }
     }
 
     private async Task SetupSignalR()
     {
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/migration-progress"))
-            .WithAutomaticReconnect()
-            .Build();
-
-        _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
+        try
         {
-            await InvokeAsync(async () =>
-            {
-                await LoadProjects();
-                StateHasChanged();
-            });
-        });
+            var hubUrl = Configuration.GetValue<bool>("ReverseProxy:Enabled")
+                ? new Uri("http://localhost:8080/hubs/migration-progress")
+                : NavigationManager.ToAbsoluteUri("/hubs/migration-progress");
 
-        _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(hubUrl)
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadProjects();
+                    StateHasChanged();
+                });
+            });
+
+            _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadProjects();
+                    StateHasChanged();
+                });
+            });
+
+            await _hubConnection.StartAsync();
+            await _hubConnection.InvokeAsync("JoinDashboard");
+        }
+        catch (Exception)
         {
-            await InvokeAsync(async () =>
-            {
-                await LoadProjects();
-                StateHasChanged();
-            });
-        });
-
-        await _hubConnection.StartAsync();
-        await _hubConnection.InvokeAsync("JoinDashboard");
+            // Hub connection failure should not crash the circuit
+        }
     }
 
     private async Task LoadProjects()

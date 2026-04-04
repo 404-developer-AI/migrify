@@ -5,6 +5,7 @@
 @inject IMigrationRetryService RetryService
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
+@inject IConfiguration Configuration
 @implements IAsyncDisposable
 
 <PageTitle>Project Logs - Migrify</PageTitle>
@@ -204,6 +205,13 @@ else
             };
 
             await LoadCounts();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && _project is not null)
+        {
             await SetupSignalR();
         }
     }
@@ -268,49 +276,60 @@ else
 
     private async Task SetupSignalR()
     {
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/migration-progress"))
-            .WithAutomaticReconnect()
-            .Build();
+        try
+        {
+            var hubUrl = Configuration.GetValue<bool>("ReverseProxy:Enabled")
+                ? new Uri("http://localhost:8080/hubs/migration-progress")
+                : NavigationManager.ToAbsoluteUri("/hubs/migration-progress");
 
-        _hubConnection.On<Guid, string, string?, string?, string?>("ReceiveLogEntry",
-            async (jobId, type, subject, sourceFolder, errorMessage) =>
-            {
-                await InvokeAsync(async () =>
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(hubUrl)
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.On<Guid, string, string?, string?, string?>("ReceiveLogEntry",
+                async (jobId, type, subject, sourceFolder, errorMessage) =>
                 {
-                    await LoadCounts();
-                    if (_table is not null)
-                        await _table.ReloadServerData();
-                    StateHasChanged();
+                    await InvokeAsync(async () =>
+                    {
+                        await LoadCounts();
+                        if (_table is not null)
+                            await _table.ReloadServerData();
+                        StateHasChanged();
+                    });
                 });
-            });
 
-        _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted",
-            async (jobId, processed, total, failed, skipped, errorMessage) =>
-            {
-                await InvokeAsync(async () =>
+            _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted",
+                async (jobId, processed, total, failed, skipped, errorMessage) =>
                 {
-                    await LoadCounts();
-                    if (_table is not null)
-                        await _table.ReloadServerData();
-                    StateHasChanged();
+                    await InvokeAsync(async () =>
+                    {
+                        await LoadCounts();
+                        if (_table is not null)
+                            await _table.ReloadServerData();
+                        StateHasChanged();
+                    });
                 });
-            });
 
-        _hubConnection.On<Guid, Guid, bool>("ReceiveRetryResult",
-            async (jobId, logId, success) =>
-            {
-                await InvokeAsync(async () =>
+            _hubConnection.On<Guid, Guid, bool>("ReceiveRetryResult",
+                async (jobId, logId, success) =>
                 {
-                    await LoadCounts();
-                    if (_table is not null)
-                        await _table.ReloadServerData();
-                    StateHasChanged();
+                    await InvokeAsync(async () =>
+                    {
+                        await LoadCounts();
+                        if (_table is not null)
+                            await _table.ReloadServerData();
+                        StateHasChanged();
+                    });
                 });
-            });
 
-        await _hubConnection.StartAsync();
-        await _hubConnection.InvokeAsync("JoinProject", ProjectId);
+            await _hubConnection.StartAsync();
+            await _hubConnection.InvokeAsync("JoinProject", ProjectId);
+        }
+        catch (Exception)
+        {
+            // Hub connection failure should not crash the circuit
+        }
     }
 
     public async ValueTask DisposeAsync()

@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -12,6 +13,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Load local overrides (gitignored, for dev credentials)
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+// Persist DataProtection keys so antiforgery tokens survive container restarts
+var dataProtectionPath = Path.Combine(AppContext.BaseDirectory, "keys");
+Directory.CreateDirectory(dataProtectionPath);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath))
+    .SetApplicationName("Migrify");
 
 // File logging to logs/ folder
 var logsDir = Path.Combine(AppContext.BaseDirectory, "logs");
@@ -98,6 +106,8 @@ if (!app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
 {
     app.UseHttpsRedirection();
 }
+
+app.UseStaticFiles();
 
 app.UseAntiforgery();
 

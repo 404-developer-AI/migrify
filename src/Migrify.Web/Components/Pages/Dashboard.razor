@@ -6,6 +6,7 @@
 @inject IConcurrencyLimitService LimitService
 @inject Migrify.Infrastructure.Services.MigrationBackgroundService BackgroundService
 @inject NavigationManager NavigationManager
+@inject IConfiguration Configuration
 @implements IAsyncDisposable
 
 <PageTitle>Dashboard - Migrify</PageTitle>
@@ -191,52 +192,70 @@
     protected override async Task OnInitializedAsync()
     {
         await LoadData();
-        await SetupSignalR();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await SetupSignalR();
+        }
     }
 
     private async Task SetupSignalR()
     {
-        _hubConnection = new HubConnectionBuilder()
-            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/migration-progress"))
-            .WithAutomaticReconnect()
-            .Build();
-
-        _hubConnection.On<Guid, int, int, string?, int, int>("ReceiveProgress", (jobId, processed, total, currentFolder, skipped, duplicates) =>
+        try
         {
-            var job = _allJobs.FirstOrDefault(j => j.JobId == jobId);
-            if (job is not null)
+            var hubUrl = Configuration.GetValue<bool>("ReverseProxy:Enabled")
+                ? new Uri("http://localhost:8080/hubs/migration-progress")
+                : NavigationManager.ToAbsoluteUri("/hubs/migration-progress");
+
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(hubUrl)
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.On<Guid, int, int, string?, int, int>("ReceiveProgress", (jobId, processed, total, currentFolder, skipped, duplicates) =>
             {
-                var percent = total > 0 ? (double)processed / total * 100 : 0;
-                var index = _allJobs.IndexOf(job);
-                _allJobs[index] = job with
+                var job = _allJobs.FirstOrDefault(j => j.JobId == jobId);
+                if (job is not null)
                 {
-                    ProgressPercent = percent,
-                    CurrentFolder = currentFolder
-                };
-                InvokeAsync(StateHasChanged);
-            }
-        });
-
-        _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
-        {
-            await InvokeAsync(async () =>
-            {
-                await LoadData();
-                StateHasChanged();
+                    var percent = total > 0 ? (double)processed / total * 100 : 0;
+                    var index = _allJobs.IndexOf(job);
+                    _allJobs[index] = job with
+                    {
+                        ProgressPercent = percent,
+                        CurrentFolder = currentFolder
+                    };
+                    InvokeAsync(StateHasChanged);
+                }
             });
-        });
 
-        _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
-        {
-            await InvokeAsync(async () =>
+            _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
             {
-                await LoadData();
-                StateHasChanged();
+                await InvokeAsync(async () =>
+                {
+                    await LoadData();
+                    StateHasChanged();
+                });
             });
-        });
 
-        await _hubConnection.StartAsync();
-        await _hubConnection.InvokeAsync("JoinDashboard");
+            _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadData();
+                    StateHasChanged();
+                });
+            });
+
+            await _hubConnection.StartAsync();
+            await _hubConnection.InvokeAsync("JoinDashboard");
+        }
+        catch (Exception)
+        {
+            // Hub connection failure should not crash the circuit
+        }
     }
 
     private async Task LoadData()
