@@ -67,10 +67,10 @@ ask() {
 
     echo -en "${CYAN}  ? ${NC}${prompt}: "
     if [ "$is_secret" = "true" ]; then
-        read -s input
+        read -s input < /dev/tty
         echo ""
     else
-        read input
+        read input < /dev/tty
     fi
 
     input="${input:-$default}"
@@ -89,7 +89,7 @@ ask_yes_no() {
     fi
 
     echo -en "${CYAN}  ? ${NC}${prompt}: "
-    read input
+    read input < /dev/tty
     input="${input:-$default}"
 
     case "$input" in
@@ -534,7 +534,7 @@ print_summary() {
     fi
     echo -e "  ${BOLD}Install report:${NC} $REPORT_FILE"
     echo ""
-    echo -e "${YELLOW}  ╔═════════════════════════════════════════════════════════���══╗${NC}"
+    echo -e "${YELLOW}  ╔════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${YELLOW}  ║${NC}  ${BOLD}${RED}WARNING:${NC} The install report contains passwords.           ${YELLOW}║${NC}"
     echo -e "${YELLOW}  ║${NC}  Save what you need, then delete the report:             ${YELLOW}║${NC}"
     echo -e "${YELLOW}  ║${NC}  ${BOLD}rm $REPORT_FILE${NC}$(printf '%*s' $((23 - ${#REPORT_FILE})) '')${YELLOW}║${NC}"
