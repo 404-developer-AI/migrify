@@ -339,41 +339,43 @@ build_and_start() {
         print_ok "Image built locally"
     fi
 
-    # Start database first, wait for healthy
+    # Start database first, wait for healthy status from Docker healthcheck
     print_ok "Starting PostgreSQL..."
     docker compose up -d db
     echo -n "  Waiting for database"
-    for i in $(seq 1 30); do
-        if docker compose exec db pg_isready -U "$POSTGRES_USER" -d migrify -q 2>/dev/null; then
+    for i in $(seq 1 60); do
+        DB_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' migrify-db 2>/dev/null || echo "not found")
+        if [ "$DB_HEALTH" = "healthy" ]; then
             echo ""
             print_ok "PostgreSQL is ready"
             break
         fi
         echo -n "."
         sleep 2
-        if [ $i -eq 30 ]; then
+        if [ $i -eq 60 ]; then
             echo ""
-            print_error "PostgreSQL failed to start within 60 seconds"
+            print_error "PostgreSQL failed to become healthy within 120 seconds"
             docker compose logs db
             exit 1
         fi
     done
 
-    # Start app, wait for healthy
+    # Start app, wait for healthy status from Docker healthcheck
     print_ok "Starting Migrify app..."
     docker compose up -d app
     echo -n "  Waiting for app"
-    for i in $(seq 1 30); do
-        if docker compose exec app curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+    for i in $(seq 1 40); do
+        APP_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' migrify-app 2>/dev/null || echo "not found")
+        if [ "$APP_HEALTH" = "healthy" ]; then
             echo ""
             print_ok "Migrify app is ready"
             break
         fi
         echo -n "."
         sleep 3
-        if [ $i -eq 30 ]; then
+        if [ $i -eq 40 ]; then
             echo ""
-            print_error "App failed to start within 90 seconds"
+            print_error "App failed to become healthy within 120 seconds"
             docker compose logs app
             exit 1
         fi
@@ -397,26 +399,20 @@ start_nginx() {
 
     cd "$INSTALL_DIR"
     docker compose up -d nginx
-    sleep 3
+    sleep 5
 
+    # Verify via localhost (always works, no DNS needed)
     if [ "$ENABLE_SSL" = "true" ]; then
-        # Verify HTTPS
-        if curl -sf --max-time 5 "https://$MIGRIFY_DOMAIN/health" > /dev/null 2>&1; then
+        if curl -sf --max-time 5 "https://localhost/health" -k > /dev/null 2>&1; then
             print_ok "HTTPS is working"
         else
             print_warn "HTTPS check failed — the app may still be starting, or DNS is not yet pointing to this server"
         fi
     else
-        # Verify HTTP
-        if curl -sf --max-time 5 "http://$MIGRIFY_DOMAIN/health" > /dev/null 2>&1; then
+        if curl -sf --max-time 5 "http://localhost/health" > /dev/null 2>&1; then
             print_ok "HTTP is working"
         else
-            # Also try localhost in case domain doesn't resolve yet
-            if curl -sf --max-time 5 "http://localhost/health" > /dev/null 2>&1; then
-                print_ok "HTTP is working (via localhost)"
-            else
-                print_warn "HTTP check failed — the app may still be starting"
-            fi
+            print_warn "HTTP check failed — Nginx may still be starting"
         fi
     fi
 }
