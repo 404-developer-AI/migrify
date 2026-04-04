@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using Azure.Identity;
@@ -15,6 +16,7 @@ public class MigrationEngine : IMigrationEngine
     private readonly ICredentialEncryptor _encryptor;
     private readonly IImapOAuthCredentialProvider _oauthProvider;
     private readonly IMigrationProgressNotifier _progressNotifier;
+    private readonly IMigrationQueueService _queueService;
     private readonly ILogger<MigrationEngine> _logger;
 
     private const int DbPersistInterval = 10; // Persist to DB every N messages
@@ -26,6 +28,7 @@ public class MigrationEngine : IMigrationEngine
         ICredentialEncryptor encryptor,
         IImapOAuthCredentialProvider oauthProvider,
         IMigrationProgressNotifier progressNotifier,
+        IMigrationQueueService queueService,
         ILogger<MigrationEngine> logger)
     {
         _jobRepository = jobRepository;
@@ -33,6 +36,7 @@ public class MigrationEngine : IMigrationEngine
         _encryptor = encryptor;
         _oauthProvider = oauthProvider;
         _progressNotifier = progressNotifier;
+        _queueService = queueService;
         _logger = logger;
     }
 
@@ -97,14 +101,21 @@ public class MigrationEngine : IMigrationEngine
             await _jobRepository.UpdateAsync(job);
             await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, job.Status.ToString(), null);
 
+            var jobSw = Stopwatch.StartNew();
+
             // Decrypt M365 credentials
             var m365 = project.M365Settings!;
             var clientSecret = _encryptor.Decrypt(m365.EncryptedClientSecret!);
             var credential = new ClientSecretCredential(m365.TenantId, m365.ClientId, clientSecret);
 
             // Get bearer token for Graph API
+            _logger.LogInformation("Job {JobId}: Acquiring M365 token for tenant {TenantId}", jobId, m365.TenantId);
+            var tokenSw = Stopwatch.StartNew();
             var tokenContext = new Azure.Core.TokenRequestContext(["https://graph.microsoft.com/.default"]);
             var token = await credential.GetTokenAsync(tokenContext, cancellationToken);
+            tokenSw.Stop();
+            _logger.LogInformation("Job {JobId}: M365 token acquired in {ElapsedMs}ms (expires {ExpiresOn})",
+                jobId, tokenSw.ElapsedMilliseconds, token.ExpiresOn);
 
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Authorization =
@@ -120,6 +131,21 @@ public class MigrationEngine : IMigrationEngine
 
             _logger.LogInformation("Job {JobId}: {TotalMessages} messages across {FolderCount} folders (after date filtering)",
                 jobId, job.TotalMessages, mappings.Count);
+
+            // DB info log: job started with config summary
+            var modeLabel = job.MigrationMode == MigrationMode.Incremental ? "Incremental" : "Full Copy";
+            var dateRange = (effectiveDateFrom.HasValue || effectiveDateTo.HasValue)
+                ? $", date range: {effectiveDateFrom?.ToString("yyyy-MM-dd") ?? "∞"} → {effectiveDateTo?.ToString("yyyy-MM-dd") ?? "∞"}"
+                : "";
+            var resumeLabel = isResume ? ", resuming from checkpoint" : "";
+            await _logRepository.CreateAsync(new MigrationLog
+            {
+                MigrationJobId = job.Id,
+                Type = MigrationLogType.Info,
+                ErrorMessage = $"Job started: {modeLabel}, {job.TotalMessages} messages in {mappings.Count} folders{dateRange}{resumeLabel}. " +
+                    $"Source: {job.SourceEmail}, Destination: {job.DestinationEmail}. " +
+                    $"Duplicates: {(checkDuplicates ? "skip" : "allow")}."
+            });
 
             if (job.TotalMessages == 0)
             {
@@ -140,7 +166,21 @@ public class MigrationEngine : IMigrationEngine
 
             // Single IMAP connection for the entire job — avoids repeated SSL fallback per folder
             using var imapClient = MigrationHelpers.CreateImapClient();
+            var imapConnSw = Stopwatch.StartNew();
             await MigrationHelpers.ConnectAndAuthenticate(imapClient, job, project, _encryptor, _oauthProvider, _logger, cancellationToken);
+            imapConnSw.Stop();
+
+            // DB info log: connection established
+            var sourceDesc = project.SourceConnectorType == SourceConnectorType.GoogleWorkspace && !job.HasImapOverride
+                ? $"Google Workspace (imap.gmail.com:993, service account: {project.GoogleWorkspaceSettings!.ServiceAccountEmail})"
+                : $"IMAP ({job.ImapSettings!.Host}:{job.ImapSettings.Port}, {job.ImapSettings.Encryption}, auth: {job.ImapSettings.AuthType})";
+            await _logRepository.CreateAsync(new MigrationLog
+            {
+                MigrationJobId = job.Id,
+                Type = MigrationLogType.Info,
+                ErrorMessage = $"Connections established — IMAP: {sourceDesc} in {imapConnSw.ElapsedMilliseconds}ms. " +
+                    $"M365: tenant {m365.TenantId} token in {tokenSw.ElapsedMilliseconds}ms."
+            });
 
             foreach (var mapping in mappings)
             {
@@ -186,8 +226,19 @@ public class MigrationEngine : IMigrationEngine
                 // Reconnect if connection was lost between folders
                 if (!imapClient.IsConnected)
                 {
-                    _logger.LogWarning("Job {JobId}: IMAP connection lost, reconnecting", jobId);
+                    _logger.LogWarning("Job {JobId}: IMAP connection lost before folder '{Folder}', reconnecting",
+                        jobId, mapping.SourceFolderName);
+                    var reconnSw = Stopwatch.StartNew();
                     await MigrationHelpers.ConnectAndAuthenticate(imapClient, job, project, _encryptor, _oauthProvider, _logger, cancellationToken);
+                    reconnSw.Stop();
+                    _logger.LogInformation("Job {JobId}: IMAP reconnected in {ElapsedMs}ms", jobId, reconnSw.ElapsedMilliseconds);
+                    await _logRepository.CreateAsync(new MigrationLog
+                    {
+                        MigrationJobId = job.Id,
+                        Type = MigrationLogType.Info,
+                        SourceFolder = mapping.SourceFolderName,
+                        ErrorMessage = $"IMAP connection lost and reconnected in {reconnSw.ElapsedMilliseconds}ms"
+                    });
                 }
 
                 try
@@ -348,8 +399,8 @@ public class MigrationEngine : IMigrationEngine
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Job {JobId}: IMAP error for folder '{Folder}'",
-                        jobId, mapping.SourceFolderName);
+                    _logger.LogError(ex, "Job {JobId}: IMAP error for folder '{Folder}' — {ErrorType}: {ErrorMessage}",
+                        jobId, mapping.SourceFolderName, ex.GetType().Name, ex.Message);
                     throw;
                 }
             }
@@ -377,6 +428,7 @@ public class MigrationEngine : IMigrationEngine
             });
 
             // Completed — preserve checkpoints for incremental re-runs
+            jobSw.Stop();
             job.Status = MigrationJobStatus.Completed;
             job.CompletedAt = DateTime.UtcNow;
             job.LastCompletedAt = job.CompletedAt;
@@ -393,31 +445,87 @@ public class MigrationEngine : IMigrationEngine
             await _jobRepository.UpdateAsync(job);
             await _progressNotifier.SendJobCompletedAsync(project.Id, job.Id,
                 job.ProcessedMessages, job.TotalMessages, failedMessages, skippedMessages, job.ErrorMessage);
-            _logger.LogInformation("Job {JobId}: Migration completed. {Processed}/{Total} messages. {Failed} failed, {Skipped} skipped, {Duplicates} already present.",
-                jobId, job.ProcessedMessages, job.TotalMessages, failedMessages, skippedMessages, duplicateMessages);
+
+            // DB info log: job completed with duration and throughput
+            var duration = jobSw.Elapsed;
+            var durationStr = duration.TotalHours >= 1
+                ? $"{(int)duration.TotalHours}h {duration.Minutes}m {duration.Seconds}s"
+                : duration.TotalMinutes >= 1
+                    ? $"{(int)duration.TotalMinutes}m {duration.Seconds}s"
+                    : $"{duration.Seconds}s";
+            var throughput = duration.TotalMinutes > 0 ? job.ProcessedMessages / duration.TotalMinutes : job.ProcessedMessages;
+            await _logRepository.CreateAsync(new MigrationLog
+            {
+                MigrationJobId = job.Id,
+                Type = MigrationLogType.Info,
+                ErrorMessage = $"Job completed in {durationStr}. " +
+                    $"{job.ProcessedMessages}/{job.TotalMessages} messages processed ({throughput:F0} msg/min). " +
+                    $"{failedMessages} failed, {skippedMessages} skipped, {duplicateMessages} duplicates."
+            });
+
+            _logger.LogInformation("Job {JobId}: Migration completed in {Duration}. {Processed}/{Total} messages ({Throughput:F0} msg/min). {Failed} failed, {Skipped} skipped, {Duplicates} already present.",
+                jobId, durationStr, job.ProcessedMessages, job.TotalMessages, throughput, failedMessages, skippedMessages, duplicateMessages);
         }
         catch (OperationCanceledException)
         {
             // Flush remaining log buffer before updating status
             try { if (logBuffer.Count > 0) await _logRepository.CreateBatchAsync(logBuffer); } catch { /* best effort */ }
 
+            // Determine cancellation reason
+            var cancelReason = _queueService.WasUserCancelled(jobId)
+                ? "Cancelled by user"
+                : "Cancelled due to application shutdown";
+
             job.Status = MigrationJobStatus.Cancelled;
             job.CompletedAt = DateTime.UtcNow;
             job.CurrentFolder = null;
+            job.ErrorMessage = cancelReason;
             await _jobRepository.UpdateAsync(job);
-            await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, job.Status.ToString(), null);
-            _logger.LogInformation("Job {JobId}: Migration cancelled at {Processed}/{Total} messages",
-                jobId, job.ProcessedMessages, job.TotalMessages);
+            await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, job.Status.ToString(), cancelReason);
+
+            // DB info log: cancellation with reason and progress
+            try
+            {
+                await _logRepository.CreateAsync(new MigrationLog
+                {
+                    MigrationJobId = job.Id,
+                    Type = MigrationLogType.Info,
+                    ErrorMessage = $"{cancelReason} at {job.ProcessedMessages}/{job.TotalMessages} messages. " +
+                        $"Last folder: {job.CurrentFolder ?? "(none)"}."
+                });
+            }
+            catch { /* best effort */ }
+
+            _logger.LogWarning("Job {JobId}: {CancelReason} at {Processed}/{Total} messages",
+                jobId, cancelReason, job.ProcessedMessages, job.TotalMessages);
         }
         catch (Exception ex)
         {
             // Flush remaining log buffer before updating status
             try { if (logBuffer.Count > 0) await _logRepository.CreateBatchAsync(logBuffer); } catch { /* best effort */ }
 
-            _logger.LogError(ex, "Job {JobId}: Migration failed", jobId);
+            _logger.LogError(ex, "Job {JobId}: Migration failed — {ErrorType}: {ErrorMessage}",
+                jobId, ex.GetType().Name, ex.Message);
             job.CompletedAt = DateTime.UtcNow;
             await SetJobFailed(job, ex.Message);
             await _progressNotifier.SendStatusChangeAsync(project.Id, job.Id, MigrationJobStatus.Failed.ToString(), ex.Message);
+
+            // DB info log: failure with full error context
+            try
+            {
+                var innerMsg = ex.InnerException is not null ? $" Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}" : "";
+                var errorContext = $"Job failed at {job.ProcessedMessages}/{job.TotalMessages} messages. " +
+                    $"Last folder: {job.CurrentFolder ?? "(none)"}. " +
+                    $"{ex.GetType().Name}: {ex.Message}{innerMsg}";
+                if (errorContext.Length > 2000) errorContext = errorContext[..2000];
+                await _logRepository.CreateAsync(new MigrationLog
+                {
+                    MigrationJobId = job.Id,
+                    Type = MigrationLogType.Info,
+                    ErrorMessage = errorContext
+                });
+            }
+            catch { /* best effort */ }
         }
     }
 

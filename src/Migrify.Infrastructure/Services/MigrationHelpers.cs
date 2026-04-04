@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Sockets;
 using Google.Apis.Auth.OAuth2;
 using MailKit;
@@ -38,9 +39,14 @@ public static class MigrationHelpers
         ICredentialEncryptor encryptor, IImapOAuthCredentialProvider oauthProvider,
         ILogger logger, CancellationToken ct)
     {
+        var totalSw = Stopwatch.StartNew();
+
         if (project.SourceConnectorType == SourceConnectorType.GoogleWorkspace && !job.HasImapOverride)
         {
             var gws = project.GoogleWorkspaceSettings!;
+            logger.LogInformation("IMAP connection: Google Workspace via service account {ServiceAccount}, impersonating {User}",
+                gws.ServiceAccountEmail, job.SourceEmail);
+
             var privateKey = encryptor.Decrypt(gws.EncryptedPrivateKey!);
             var credential = new ServiceAccountCredential(
                 new ServiceAccountCredential.Initializer(gws.ServiceAccountEmail)
@@ -49,54 +55,92 @@ public static class MigrationHelpers
                     User = job.SourceEmail
                 }.FromPrivateKey(privateKey));
 
+            var tokenSw = Stopwatch.StartNew();
             await credential.RequestAccessTokenAsync(ct);
+            tokenSw.Stop();
+            logger.LogInformation("Google Workspace OAuth token acquired in {ElapsedMs}ms for {User}",
+                tokenSw.ElapsedMilliseconds, job.SourceEmail);
+
             var accessToken = credential.Token.AccessToken;
 
             await ConnectImapClient(client, "imap.gmail.com", 993, SecureSocketOptions.SslOnConnect, logger, ct);
 
+            var authSw = Stopwatch.StartNew();
             var oauth2 = new SaslMechanismOAuth2(job.SourceEmail, accessToken);
             await client.AuthenticateAsync(oauth2, ct);
+            authSw.Stop();
+            logger.LogInformation("IMAP authenticated via OAuth2 in {ElapsedMs}ms for {User}",
+                authSw.ElapsedMilliseconds, job.SourceEmail);
         }
         else
         {
             var imap = job.ImapSettings!;
             var socketOptions = MapEncryption(imap.Encryption);
+            logger.LogInformation("IMAP connection: {Host}:{Port}, encryption: {Encryption}, auth: {AuthType}, user: {User}",
+                imap.Host, imap.Port, imap.Encryption, imap.AuthType, imap.Username);
 
             await ConnectImapClient(client, imap.Host, imap.Port, socketOptions, logger, ct);
 
+            var authSw = Stopwatch.StartNew();
             if (imap.AuthType == ImapAuthType.OAuth2)
             {
                 var accessToken = await oauthProvider.GetAccessTokenAsync(imap);
                 var oauth2 = new SaslMechanismOAuth2(imap.Username ?? string.Empty, accessToken);
                 await client.AuthenticateAsync(oauth2, ct);
+                authSw.Stop();
+                logger.LogInformation("IMAP authenticated via OAuth2 in {ElapsedMs}ms for {User}",
+                    authSw.ElapsedMilliseconds, imap.Username);
             }
             else
             {
                 var password = encryptor.Decrypt(imap.EncryptedPassword!);
                 await client.AuthenticateAsync(imap.Username ?? string.Empty, password, ct);
+                authSw.Stop();
+                logger.LogInformation("IMAP authenticated via password in {ElapsedMs}ms for {User}",
+                    authSw.ElapsedMilliseconds, imap.Username);
             }
         }
+
+        totalSw.Stop();
+        logger.LogInformation("IMAP connection fully established in {ElapsedMs}ms", totalSw.ElapsedMilliseconds);
     }
 
     public static async Task ConnectImapClient(
         ImapClient client, string host, int port, SecureSocketOptions socketOptions,
         ILogger logger, CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
         try
         {
             await client.ConnectAsync(host, port, socketOptions, ct);
+            sw.Stop();
+            logger.LogInformation("IMAP connected to {Host}:{Port} ({SocketOptions}) in {ElapsedMs}ms",
+                host, port, socketOptions, sw.ElapsedMilliseconds);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            logger.LogWarning(ex, "Primary IMAP connection failed to {Host}:{Port}, attempting IPv4 fallback", host, port);
+            sw.Stop();
+            logger.LogWarning(ex, "Primary IMAP connection to {Host}:{Port} failed after {ElapsedMs}ms, attempting IPv4 fallback",
+                host, port, sw.ElapsedMilliseconds);
 
+            var dnsSw = Stopwatch.StartNew();
             var addresses = await System.Net.Dns.GetHostAddressesAsync(host, ct);
+            dnsSw.Stop();
+            logger.LogInformation("DNS resolved {Host} to {AddressCount} addresses in {ElapsedMs}ms (IPv4: {IPv4}, IPv6: {IPv6})",
+                host, addresses.Length, dnsSw.ElapsedMilliseconds,
+                addresses.Count(a => a.AddressFamily == AddressFamily.InterNetwork),
+                addresses.Count(a => a.AddressFamily == AddressFamily.InterNetworkV6));
+
             var ipv4 = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
                 ?? throw new InvalidOperationException($"No IPv4 address found for {host}");
 
+            var fallbackSw = Stopwatch.StartNew();
             var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             await socket.ConnectAsync(ipv4, port, ct);
             await client.ConnectAsync(socket, host, port, socketOptions, ct);
+            fallbackSw.Stop();
+            logger.LogInformation("IMAP connected via IPv4 fallback ({Address}:{Port}) in {ElapsedMs}ms",
+                ipv4, port, fallbackSw.ElapsedMilliseconds);
         }
     }
 

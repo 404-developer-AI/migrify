@@ -53,6 +53,10 @@ else
                  OnClick="() => SetTypeFilter(MigrationLogType.Retried)" Size="Size.Small">
             Retried (@_countRetried)
         </MudChip>
+        <MudChip T="string" Color="@(_typeFilter == MigrationLogType.Info ? Color.Tertiary : Color.Default)"
+                 OnClick="() => SetTypeFilter(MigrationLogType.Info)" Size="Size.Small">
+            Info (@_countInfo)
+        </MudChip>
 
         <MudSpacer />
 
@@ -92,6 +96,29 @@ else
                         @context.TotalSkipped skipped, @context.TotalDuplicates duplicates
                     </MudText>
                 </MudTd>
+            }
+            else if (context.Type == MigrationLogType.Info)
+            {
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Tertiary">Info</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Job">
+                    <MudLink Href="@($"/projects/{ProjectId}/jobs/{context.MigrationJobId}/logs")"
+                             Typo="Typo.body2">
+                        @(context.MigrationJob?.SourceEmail ?? "—")
+                    </MudLink>
+                </MudTd>
+                <MudTd DataLabel="Subject" colspan="4">
+                    @if (!string.IsNullOrEmpty(context.ErrorMessage))
+                    {
+                        <MudTooltip Text="@context.ErrorMessage">
+                            <MudText Typo="Typo.body2" Style="max-width: 600px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                @context.ErrorMessage
+                            </MudText>
+                        </MudTooltip>
+                    }
+                </MudTd>
+                <MudTd />
             }
             else
             {
@@ -184,6 +211,7 @@ else
     private int _countSkipped;
     private int _countSummary;
     private int _countRetried;
+    private int _countInfo;
     private int _totalAll;
 
     private HashSet<Guid> _retryingLogIds = new();
@@ -223,7 +251,8 @@ else
         _countSkipped = counts.GetValueOrDefault(MigrationLogType.Skipped);
         _countSummary = counts.GetValueOrDefault(MigrationLogType.Summary);
         _countRetried = counts.GetValueOrDefault(MigrationLogType.Retried);
-        _totalAll = _countError + _countSkipped + _countSummary + _countRetried;
+        _countInfo = counts.GetValueOrDefault(MigrationLogType.Info);
+        _totalAll = _countError + _countSkipped + _countSummary + _countRetried + _countInfo;
     }
 
     private async Task<TableData<MigrationLog>> LoadLogs(TableState state, CancellationToken ct)

@@ -10,6 +10,7 @@ public interface IMigrationQueueService
     bool IsRunning(Guid jobId);
     bool IsQueued(Guid jobId);
     bool TryCancelQueued(Guid jobId);
+    bool WasUserCancelled(Guid jobId);
 
     // Metadata tracking for concurrency limits
     void RegisterJobMetadata(Guid jobId, RunningJobInfo info);

@@ -12,6 +12,7 @@ public class MigrationQueueService : IMigrationQueueService
     private readonly ConcurrentDictionary<Guid, RunningJobInfo> _runningJobInfos = new();
     private readonly ConcurrentDictionary<Guid, bool> _queuedJobs = new();
     private readonly ConcurrentDictionary<Guid, bool> _cancelledFromQueue = new();
+    private readonly ConcurrentDictionary<Guid, bool> _userCancelledJobs = new();
 
     public async ValueTask EnqueueAsync(Guid jobId)
     {
@@ -30,10 +31,16 @@ public class MigrationQueueService : IMigrationQueueService
     {
         if (_runningJobs.TryGetValue(jobId, out var cts))
         {
+            _userCancelledJobs[jobId] = true;
             cts.Cancel();
             return true;
         }
         return false;
+    }
+
+    public bool WasUserCancelled(Guid jobId)
+    {
+        return _userCancelledJobs.ContainsKey(jobId);
     }
 
     public bool IsRunning(Guid jobId)
@@ -75,6 +82,7 @@ public class MigrationQueueService : IMigrationQueueService
             cts.Dispose();
         }
         _runningJobInfos.TryRemove(jobId, out _);
+        _userCancelledJobs.TryRemove(jobId, out _);
     }
 
     public void RegisterJobMetadata(Guid jobId, RunningJobInfo info)

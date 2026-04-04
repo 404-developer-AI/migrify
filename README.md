@@ -9,7 +9,7 @@
 
 Migrify migrates email from IMAP mailboxes (Gmail, Google Workspace, Outlook, Yahoo, your uncle's self-hosted mail server from 2003) to Microsoft 365 Exchange Online.
 
-What started as "let's see if this is even possible" is now a fully functional migration tool with parallel execution, smart queuing, real-time progress tracking, and one-command deployment. Version 0.1.0 is the first release that's genuinely ready to use.
+What started as "let's see if this is even possible" is now a fully functional migration tool with parallel execution, smart queuing, real-time progress tracking, and one-command deployment.
 
 ### Features
 
@@ -36,6 +36,7 @@ What started as "let's see if this is even possible" is now a fully functional m
 - Dashboard with cross-project job overview, queue positions, and wait reasons
 - Concurrency limit panels with per-layer occupancy and confidence indicators
 - Searchable migration logs at project and job level with type filtering
+- Job diagnostics: connection timing, cancel reasons, throughput metrics, full error context in DB logs
 - Premium dark/light UI with MudBlazor
 
 **Deployment**
@@ -92,9 +93,9 @@ Should you trust your 50,000-email production mailbox to software built by someo
 
 ## Status
 
-Current version: `v0.1.0`
+Current version: `v0.1.1`
 
-This is the first version that's deployed, running, and ready for real use. The migration engine is solid, the deployment is automated, and the UI doesn't look like it was built in 2003. The version numbering starts at 0.1.0 because calling it 1.0 still feels like tempting fate.
+The migration engine is solid, the deployment is automated, and the UI doesn't look like it was built in 2003. v0.1.1 adds comprehensive job diagnostics — connection timing, cancel reasons, throughput metrics, and full error context — so you actually know what happened when something goes wrong.
 
 ## License
 
