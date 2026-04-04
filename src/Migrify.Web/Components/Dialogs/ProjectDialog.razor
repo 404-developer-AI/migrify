@@ -9,12 +9,6 @@
         <MudTextField @bind-Value="_name" Label="Project Name" Required="true"
                       RequiredError="Project name is required" Class="mb-3" />
         <MudTextField @bind-Value="_description" Label="Description" Lines="3" Class="mb-3" />
-        <MudSelect @bind-Value="_status" Label="Status" Class="mb-3">
-            @foreach (var status in Enum.GetValues<ProjectStatus>())
-            {
-                <MudSelectItem Value="@status">@status</MudSelectItem>
-            }
-        </MudSelect>
     </DialogContent>
     <DialogActions>
         <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
@@ -35,7 +29,6 @@
 
     private string _name = string.Empty;
     private string? _description;
-    private ProjectStatus _status = ProjectStatus.New;
     private bool _isSaving;
 
     protected override void OnParametersSet()
@@ -44,7 +37,6 @@
         {
             _name = ExistingProject.Name;
             _description = ExistingProject.Description;
-            _status = ExistingProject.Status;
         }
     }
 
@@ -68,7 +60,6 @@
                 project = ExistingProject!;
                 project.Name = _name;
                 project.Description = _description;
-                project.Status = _status;
                 await ProjectRepository.UpdateAsync(project);
                 Snackbar.Add("Project updated successfully.", Severity.Success);
             }
@@ -77,8 +68,7 @@
                 project = new Project
                 {
                     Name = _name,
-                    Description = _description,
-                    Status = _status
+                    Description = _description
                 };
                 await ProjectRepository.CreateAsync(project);
                 Snackbar.Add("Project created successfully.", Severity.Success);

@@ -13,4 +13,14 @@ public class MigrationProgressHub : Hub
     {
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"project-{projectId}");
     }
+
+    public async Task JoinDashboard()
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, "dashboard");
+    }
+
+    public async Task LeaveDashboard()
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, "dashboard");
+    }
 }

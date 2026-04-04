@@ -12,4 +12,5 @@ public interface IMigrationJobRepository
     Task DeleteAsync(Guid id);
     Task<int> GetCountAsync();
     Task<Dictionary<MigrationJobStatus, int>> GetStatusCountsAsync();
+    Task<List<MigrationJob>> GetAllWithProjectAsync(int? limit = null);
 }

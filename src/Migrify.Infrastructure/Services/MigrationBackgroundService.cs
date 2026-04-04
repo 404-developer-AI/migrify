@@ -18,7 +18,8 @@ public class MigrationBackgroundService : BackgroundService
     private readonly List<Task> _runningTasks = new();
     private readonly object _taskLock = new();
     private readonly SemaphoreSlim _jobCompletedSignal = new(0);
-    private readonly List<(Guid JobId, RunningJobInfo Info)> _waitingJobs = new();
+    private readonly List<(Guid JobId, RunningJobInfo Info, WaitReason Reason)> _waitingJobs = new();
+    private readonly object _waitingLock = new();
 
     public MigrationBackgroundService(
         MigrationQueueService queue,
@@ -32,6 +33,14 @@ public class MigrationBackgroundService : BackgroundService
         _logger = logger;
     }
 
+    public IReadOnlyList<(Guid JobId, RunningJobInfo Info, WaitReason Reason)> GetWaitingJobs()
+    {
+        lock (_waitingLock)
+        {
+            return _waitingJobs.ToList();
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Migration background service started");
@@ -39,7 +48,10 @@ public class MigrationBackgroundService : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             // First, try to dispatch any waiting jobs that might now be eligible
-            TryDispatchWaitingJobs(stoppingToken);
+            lock (_waitingLock)
+            {
+                TryDispatchWaitingJobs(stoppingToken);
+            }
 
             // Clean up completed tasks
             CleanupCompletedTasks();
@@ -57,7 +69,9 @@ public class MigrationBackgroundService : BackgroundService
             {
                 // Timeout — no new jobs, but we'll re-check waiting jobs on next iteration
                 // If there are waiting jobs, wait for a signal that a running job completed
-                if (_waitingJobs.Count > 0)
+                int waitingCount;
+                lock (_waitingLock) { waitingCount = _waitingJobs.Count; }
+                if (waitingCount > 0)
                 {
                     try
                     {
@@ -97,10 +111,14 @@ public class MigrationBackgroundService : BackgroundService
             }
             else
             {
-                _waitingJobs.Add((jobId, jobInfo));
+                var reason = _limitService.DetermineWaitReason(jobInfo.TenantId, jobInfo.SourceKey, jobInfo.SourceType);
+                lock (_waitingLock)
+                {
+                    _waitingJobs.Add((jobId, jobInfo, reason));
+                }
                 _logger.LogInformation(
-                    "Job {JobId} added to waiting list (tenant: {TenantId}, source: {SourceKey}). {WaitingCount} jobs waiting",
-                    jobId, jobInfo.TenantId, jobInfo.SourceKey, _waitingJobs.Count);
+                    "Job {JobId} added to waiting list (tenant: {TenantId}, source: {SourceKey}, reason: {Reason}). {WaitingCount} jobs waiting",
+                    jobId, jobInfo.TenantId, jobInfo.SourceKey, reason, _waitingJobs.Count);
             }
         }
 
@@ -124,7 +142,7 @@ public class MigrationBackgroundService : BackgroundService
     {
         for (int i = _waitingJobs.Count - 1; i >= 0; i--)
         {
-            var (jobId, info) = _waitingJobs[i];
+            var (jobId, info, _) = _waitingJobs[i];
 
             if (_limitService.CanStartJob(info.TenantId, info.SourceKey, info.SourceType))
             {
@@ -132,6 +150,12 @@ public class MigrationBackgroundService : BackgroundService
                 StartJob(jobId, info, stoppingToken);
                 _logger.LogInformation("Dispatched waiting job {JobId} (tenant: {TenantId}, source: {SourceKey})",
                     jobId, info.TenantId, info.SourceKey);
+            }
+            else
+            {
+                // Update wait reason — bottleneck may have changed
+                var newReason = _limitService.DetermineWaitReason(info.TenantId, info.SourceKey, info.SourceType);
+                _waitingJobs[i] = (jobId, info, newReason);
             }
         }
     }

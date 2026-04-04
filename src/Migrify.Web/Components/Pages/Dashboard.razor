@@ -2,14 +2,20 @@
 @attribute [Authorize]
 @inject IProjectRepository ProjectRepository
 @inject IMigrationJobRepository JobRepository
+@inject IMigrationQueueService MigrationQueue
+@inject IConcurrencyLimitService LimitService
+@inject Migrify.Infrastructure.Services.MigrationBackgroundService BackgroundService
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
 
 <PageTitle>Dashboard - Migrify</PageTitle>
 
 <MudText Typo="Typo.h4" Class="page-title mb-6">Dashboard</MudText>
 
-<MudGrid Spacing="4">
+@* Stat Cards *@
+<MudGrid Spacing="4" Class="mb-4">
     <MudItem xs="12" sm="4">
-        <MudCard Class="stat-card" Elevation="0">
+        <MudCard Class="stat-card" Elevation="0" Style="height: 100%;">
             <MudCardContent Class="pa-0">
                 <div class="stat-icon">
                     <MudIcon Icon="@Icons.Material.Outlined.Folder" Style="font-size: inherit;" />
@@ -34,7 +40,7 @@
         </MudCard>
     </MudItem>
     <MudItem xs="12" sm="4">
-        <MudCard Class="stat-card" Elevation="0">
+        <MudCard Class="stat-card" Elevation="0" Style="height: 100%;">
             <MudCardContent Class="pa-0">
                 <div class="stat-icon">
                     <MudIcon Icon="@Icons.Material.Outlined.Email" Style="font-size: inherit;" />
@@ -52,14 +58,14 @@
                 {
                     <div class="stat-number" style="color: var(--mud-palette-primary);">@_totalJobs</div>
                     <div class="stat-detail">
-                        @_queuedJobs Queued · @_runningJobs Running · @_completedJobs Completed · @_failedJobs Failed
+                        @_pendingJobs Pending · @_queuedJobs Queued · @_runningJobs Running · @_completedJobs Completed · @_failedJobs Failed
                     </div>
                 }
             </MudCardContent>
         </MudCard>
     </MudItem>
     <MudItem xs="12" sm="4">
-        <MudCard Class="stat-card" Elevation="0">
+        <MudCard Class="stat-card" Elevation="0" Style="height: 100%;">
             <MudCardContent Class="pa-0">
                 <div class="stat-icon">
                     <MudIcon Icon="@Icons.Material.Outlined.MonitorHeart" Style="font-size: inherit;" />
@@ -74,6 +80,95 @@
     </MudItem>
 </MudGrid>
 
+@* Concurrency Limit Panel *@
+@if (!_loading)
+{
+    <ConcurrencyLimitPanel Overview="@_concurrencyOverview" />
+}
+
+@* Job Table *@
+@if (!_loading && _totalJobs > 0)
+{
+    <MudCard Elevation="0">
+        <MudCardContent>
+            <div class="d-flex align-center justify-space-between mb-3">
+                <MudText Typo="Typo.subtitle1" Style="font-weight: 600;">All Migration Jobs</MudText>
+            </div>
+
+            <MudChipSet T="string" @bind-SelectedValue="_statusFilter" Class="mb-3">
+                <MudChip T="string" Value="@("All")" Variant="Variant.Text">All (@_allJobs.Count)</MudChip>
+                <MudChip T="string" Value="@("Pending")" Variant="Variant.Text" Color="Color.Default">Pending (@_allJobs.Count(j => j.Status is MigrationJobStatus.New or MigrationJobStatus.Ready))</MudChip>
+                <MudChip T="string" Value="@("Running")" Variant="Variant.Text" Color="Color.Info">Running (@_allJobs.Count(j => j.Status == MigrationJobStatus.Running))</MudChip>
+                <MudChip T="string" Value="@("Queued")" Variant="Variant.Text" Color="Color.Warning">Queued (@_allJobs.Count(j => j.Status == MigrationJobStatus.Queued))</MudChip>
+                <MudChip T="string" Value="@("Completed")" Variant="Variant.Text" Color="Color.Success">Completed (@_allJobs.Count(j => j.Status == MigrationJobStatus.Completed))</MudChip>
+                <MudChip T="string" Value="@("Failed")" Variant="Variant.Text" Color="Color.Error">Failed (@_allJobs.Count(j => j.Status == MigrationJobStatus.Failed))</MudChip>
+            </MudChipSet>
+
+            <MudTable Items="@GetFilteredJobs()" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                      Loading="@_loading" LoadingProgressColor="Color.Primary" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Project</MudTh>
+                    <MudTh>Source</MudTh>
+                    <MudTh>Destination</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Progress</MudTh>
+                    <MudTh>Details</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Project">
+                        <MudLink Href="@($"/projects/{context.ProjectId}")">@context.ProjectName</MudLink>
+                    </MudTd>
+                    <MudTd DataLabel="Source">
+                        <MudText Typo="Typo.body2">@TruncateEmail(context.SourceEmail)</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Destination">
+                        <MudText Typo="Typo.body2">@TruncateEmail(context.DestinationEmail)</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                            @context.Status
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Progress">
+                        @if (context.Status == MigrationJobStatus.Running)
+                        {
+                            <MudProgressLinear Value="@context.ProgressPercent" Color="Color.Primary"
+                                               Rounded="true" Size="Size.Small" Style="min-width: 80px;" />
+                            <MudText Typo="Typo.caption">@context.ProgressPercent.ToString("F0")%</MudText>
+                        }
+                        else if (context.Status == MigrationJobStatus.Completed)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Success">100%</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Details">
+                        @if (context.Status == MigrationJobStatus.Running && !string.IsNullOrEmpty(context.CurrentFolder))
+                        {
+                            <MudText Typo="Typo.caption" Style="opacity: 0.7;">@context.CurrentFolder</MudText>
+                        }
+                        else if (context.Status == MigrationJobStatus.Queued)
+                        {
+                            @if (context.QueuePosition.HasValue)
+                            {
+                                <MudText Typo="Typo.caption" Style="opacity: 0.7;">Position #@context.QueuePosition</MudText>
+                            }
+                            @if (context.WaitReason != WaitReason.None)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">
+                                    @GetWaitReasonText(context.WaitReason)
+                                </MudChip>
+                            }
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Align="Align.Center">No jobs match the selected filter.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        </MudCardContent>
+    </MudCard>
+}
+
 @code {
     private bool _loading = true;
     private int _totalProjects;
@@ -82,26 +177,188 @@
     private int _completedCount;
 
     private int _totalJobs;
+    private int _pendingJobs;
     private int _queuedJobs;
     private int _runningJobs;
     private int _completedJobs;
     private int _failedJobs;
 
+    private List<DashboardJobDto> _allJobs = new();
+    private string _statusFilter = "All";
+    private ConcurrencyOverview? _concurrencyOverview;
+    private HubConnection? _hubConnection;
+
     protected override async Task OnInitializedAsync()
     {
+        await LoadData();
+        await SetupSignalR();
+    }
+
+    private async Task SetupSignalR()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/migration-progress"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<Guid, int, int, string?, int, int>("ReceiveProgress", (jobId, processed, total, currentFolder, skipped, duplicates) =>
+        {
+            var job = _allJobs.FirstOrDefault(j => j.JobId == jobId);
+            if (job is not null)
+            {
+                var percent = total > 0 ? (double)processed / total * 100 : 0;
+                var index = _allJobs.IndexOf(job);
+                _allJobs[index] = job with
+                {
+                    ProgressPercent = percent,
+                    CurrentFolder = currentFolder
+                };
+                InvokeAsync(StateHasChanged);
+            }
+        });
+
+        _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadData();
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadData();
+                StateHasChanged();
+            });
+        });
+
+        await _hubConnection.StartAsync();
+        await _hubConnection.InvokeAsync("JoinDashboard");
+    }
+
+    private async Task LoadData()
+    {
+        _loading = true;
+
         var projects = await ProjectRepository.GetAllAsync();
         _totalProjects = projects.Count;
-        _newCount = projects.Count(p => p.Status == ProjectStatus.New);
-        _activeCount = projects.Count(p => p.Status == ProjectStatus.Active);
-        _completedCount = projects.Count(p => p.Status == ProjectStatus.Completed);
+        _newCount = projects.Count(p => p.ComputedStatus == ProjectStatus.New);
+        _activeCount = projects.Count(p => p.ComputedStatus == ProjectStatus.Active);
+        _completedCount = projects.Count(p => p.ComputedStatus == ProjectStatus.Completed);
 
         var jobCounts = await JobRepository.GetStatusCountsAsync();
         _totalJobs = jobCounts.Values.Sum();
+        _pendingJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.New)
+                     + jobCounts.GetValueOrDefault(MigrationJobStatus.Ready);
         _queuedJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Queued);
         _runningJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Running);
         _completedJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Completed);
         _failedJobs = jobCounts.GetValueOrDefault(MigrationJobStatus.Failed);
 
+        // Build job list from DB + in-memory state
+        var dbJobs = await JobRepository.GetAllWithProjectAsync(200);
+        var runningInfos = MigrationQueue.GetRunningJobInfos();
+        var waitingJobs = BackgroundService.GetWaitingJobs();
+
+        _allJobs = dbJobs.Select(j =>
+        {
+            var isRunning = MigrationQueue.IsRunning(j.Id);
+            var isQueued = MigrationQueue.IsQueued(j.Id);
+
+            // Determine effective status from in-memory state
+            var status = isRunning ? MigrationJobStatus.Running
+                       : isQueued ? MigrationJobStatus.Queued
+                       : j.Status;
+
+            // Find wait reason and queue position for waiting jobs
+            var waitReason = WaitReason.None;
+            int? queuePosition = null;
+            var waitingIndex = waitingJobs.ToList().FindIndex(w => w.JobId == j.Id);
+            if (waitingIndex >= 0)
+            {
+                status = MigrationJobStatus.Queued;
+                waitReason = waitingJobs[waitingIndex].Reason;
+                queuePosition = waitingIndex + 1;
+            }
+            else if (isQueued)
+            {
+                // Queued in channel but not yet in waiting list
+                status = MigrationJobStatus.Queued;
+            }
+
+            var percent = j.TotalMessages > 0 ? (double)j.ProcessedMessages / j.TotalMessages * 100 : 0;
+
+            return new DashboardJobDto(
+                JobId: j.Id,
+                ProjectId: j.ProjectId,
+                ProjectName: j.Project?.Name ?? "Unknown",
+                SourceEmail: j.SourceEmail,
+                DestinationEmail: j.DestinationEmail,
+                Status: status,
+                ProgressPercent: percent,
+                CurrentFolder: j.CurrentFolder,
+                QueuePosition: queuePosition,
+                WaitReason: waitReason
+            );
+        }).ToList();
+
+        // Concurrency overview (global)
+        _concurrencyOverview = LimitService.GetConcurrencyOverview(null, null, null);
+
         _loading = false;
+    }
+
+    private IEnumerable<DashboardJobDto> GetFilteredJobs()
+    {
+        if (_statusFilter == "All")
+            return _allJobs;
+
+        return _statusFilter switch
+        {
+            "Pending" => _allJobs.Where(j => j.Status is MigrationJobStatus.New or MigrationJobStatus.Ready),
+            "Running" => _allJobs.Where(j => j.Status == MigrationJobStatus.Running),
+            "Queued" => _allJobs.Where(j => j.Status == MigrationJobStatus.Queued),
+            "Completed" => _allJobs.Where(j => j.Status == MigrationJobStatus.Completed),
+            "Failed" => _allJobs.Where(j => j.Status == MigrationJobStatus.Failed),
+            _ => _allJobs
+        };
+    }
+
+    private static Color GetStatusColor(MigrationJobStatus status) => status switch
+    {
+        MigrationJobStatus.Running => Color.Info,
+        MigrationJobStatus.Queued => Color.Warning,
+        MigrationJobStatus.Completed => Color.Success,
+        MigrationJobStatus.Failed => Color.Error,
+        MigrationJobStatus.Cancelled => Color.Default,
+        _ => Color.Default
+    };
+
+    private static string GetWaitReasonText(WaitReason reason) => reason switch
+    {
+        WaitReason.SystemLimitReached => "System limit",
+        WaitReason.DestinationSlotFull => "Destination slot",
+        WaitReason.SourceSlotFull => "Source slot",
+        _ => ""
+    };
+
+    private static string TruncateEmail(string email)
+    {
+        return email.Length > 30 ? email[..27] + "..." : email;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+        {
+            try
+            {
+                await _hubConnection.DisposeAsync();
+            }
+            catch { }
+        }
     }
 }

@@ -16,6 +16,7 @@ public class ProjectRepository : IProjectRepository
     public async Task<List<Project>> GetAllAsync()
     {
         return await _db.Projects
+            .AsNoTracking()
             .Include(p => p.MigrationJobs)
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
@@ -24,6 +25,7 @@ public class ProjectRepository : IProjectRepository
     public async Task<Project?> GetByIdAsync(Guid id)
     {
         return await _db.Projects
+            .AsNoTracking()
             .Include(p => p.MigrationJobs)
             .Include(p => p.M365Settings)
             .FirstOrDefaultAsync(p => p.Id == id);
@@ -32,6 +34,7 @@ public class ProjectRepository : IProjectRepository
     public async Task<Project?> GetByIdWithConnectorsAsync(Guid id)
     {
         return await _db.Projects
+            .AsNoTracking()
             .Include(p => p.MigrationJobs)
                 .ThenInclude(j => j.ImapSettings)
             .Include(p => p.M365Settings)
@@ -54,6 +57,13 @@ public class ProjectRepository : IProjectRepository
     public async Task UpdateAsync(Project project)
     {
         project.UpdatedAt = DateTime.UtcNow;
+
+        var entry = _db.Entry(project);
+        if (entry.State == EntityState.Detached)
+        {
+            _db.Projects.Update(project);
+        }
+
         await _db.SaveChangesAsync();
     }
 

@@ -28,11 +28,17 @@ public class SignalRMigrationProgressNotifier : IMigrationProgressNotifier
 
         await _hubContext.Clients.Group($"project-{projectId}")
             .SendAsync("ReceiveProgress", jobId, processed, total, currentFolder, skipped, duplicates);
+
+        await _hubContext.Clients.Group("dashboard")
+            .SendAsync("ReceiveProgress", jobId, processed, total, currentFolder, skipped, duplicates);
     }
 
     public async Task SendStatusChangeAsync(Guid projectId, Guid jobId, string status, string? errorMessage)
     {
         await _hubContext.Clients.Group($"project-{projectId}")
+            .SendAsync("ReceiveStatusChange", jobId, status, errorMessage);
+
+        await _hubContext.Clients.Group("dashboard")
             .SendAsync("ReceiveStatusChange", jobId, status, errorMessage);
     }
 
@@ -42,6 +48,9 @@ public class SignalRMigrationProgressNotifier : IMigrationProgressNotifier
         _lastProgressSent.TryRemove(jobId, out _);
 
         await _hubContext.Clients.Group($"project-{projectId}")
+            .SendAsync("ReceiveJobCompleted", jobId, processed, total, failed, skipped, errorMessage);
+
+        await _hubContext.Clients.Group("dashboard")
             .SendAsync("ReceiveJobCompleted", jobId, processed, total, failed, skipped, errorMessage);
     }
 

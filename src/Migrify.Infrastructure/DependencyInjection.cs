@@ -47,7 +47,8 @@ public static class DependencyInjection
         services.AddSingleton<MigrationQueueService>();
         services.AddSingleton<IMigrationQueueService>(sp => sp.GetRequiredService<MigrationQueueService>());
         services.AddTransient<IMigrationEngine, MigrationEngine>();
-        services.AddHostedService<MigrationBackgroundService>();
+        services.AddSingleton<MigrationBackgroundService>();
+        services.AddHostedService(sp => sp.GetRequiredService<MigrationBackgroundService>());
 
         // Concurrency limit services
         services.AddSingleton<SystemResourceMonitor>();

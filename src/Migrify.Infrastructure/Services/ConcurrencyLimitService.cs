@@ -85,6 +85,74 @@ public class ConcurrencyLimitService : IConcurrencyLimitService
         );
     }
 
+    public WaitReason DetermineWaitReason(string tenantId, string sourceKey, SourceConnectorType sourceType)
+    {
+        var runningJobs = _queueService.GetRunningJobInfos();
+        var totalRunning = runningJobs.Count;
+
+        // Check in same order as CanStartJob
+        var systemLimit = GetEffectiveSystemLimit();
+        if (totalRunning >= systemLimit)
+            return WaitReason.SystemLimitReached;
+
+        var destLimit = GetEffectiveDestinationLimit(tenantId);
+        var runningForTenant = _queueService.CountRunningByTenant(tenantId);
+        if (runningForTenant >= destLimit)
+            return WaitReason.DestinationSlotFull;
+
+        var srcLimit = GetEffectiveSourceLimit(sourceKey, sourceType);
+        var runningForSource = _queueService.CountRunningBySource(sourceKey);
+        if (runningForSource >= srcLimit)
+            return WaitReason.SourceSlotFull;
+
+        return WaitReason.None;
+    }
+
+    public ConcurrencyOverview GetConcurrencyOverview(string? tenantId, string? sourceKey, SourceConnectorType? sourceType)
+    {
+        var runningJobs = _queueService.GetRunningJobInfos();
+        var totalRunning = runningJobs.Count;
+
+        // System layer
+        var systemLimit = GetEffectiveSystemLimit();
+        var systemLayer = new ConcurrencyLayerStatus(
+            Label: "System",
+            Limit: systemLimit,
+            Occupancy: totalRunning,
+            Confidence: LimitConfidence.Calculated
+        );
+
+        // Destination layer
+        var effectiveTenantId = tenantId ?? "";
+        var destLimit = GetEffectiveDestinationLimit(effectiveTenantId);
+        var destOccupancy = string.IsNullOrEmpty(tenantId)
+            ? totalRunning
+            : _queueService.CountRunningByTenant(effectiveTenantId);
+        var destLayer = new ConcurrencyLayerStatus(
+            Label: string.IsNullOrEmpty(tenantId) ? "Destination (all tenants)" : $"Destination ({tenantId})",
+            Limit: destLimit,
+            Occupancy: destOccupancy,
+            Confidence: LimitConfidence.Estimated
+        );
+
+        // Source layer
+        var effectiveSourceKey = sourceKey ?? "";
+        var effectiveSourceType = sourceType ?? SourceConnectorType.ManualImap;
+        var srcLimit = GetEffectiveSourceLimit(effectiveSourceKey, effectiveSourceType);
+        var srcOccupancy = string.IsNullOrEmpty(sourceKey)
+            ? totalRunning
+            : _queueService.CountRunningBySource(effectiveSourceKey);
+        var isKnown = !string.IsNullOrEmpty(sourceKey) && _sourceLimitProvider.IsKnownProvider(effectiveSourceKey, effectiveSourceType);
+        var srcLayer = new ConcurrencyLayerStatus(
+            Label: string.IsNullOrEmpty(sourceKey) ? "Source (all sources)" : $"Source ({sourceKey})",
+            Limit: srcLimit,
+            Occupancy: srcOccupancy,
+            Confidence: isKnown ? LimitConfidence.Known : LimitConfidence.Estimated
+        );
+
+        return new ConcurrencyOverview(destLayer, srcLayer, systemLayer);
+    }
+
     public void RefreshSystemLimits()
     {
         _resourceMonitor.Refresh();

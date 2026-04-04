@@ -3,6 +3,8 @@
 @inject IProjectRepository ProjectRepository
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
 
 <PageTitle>Projects - Migrify</PageTitle>
 
@@ -41,8 +43,8 @@ else
                 </MudLink>
             </MudTd>
             <MudTd DataLabel="Status">
-                <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
-                    @context.Status
+                <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.ComputedStatus)">
+                    @context.ComputedStatus
                 </MudChip>
             </MudTd>
             <MudTd DataLabel="Jobs">
@@ -69,10 +71,41 @@ else
 @code {
     private List<Project> _projects = new();
     private bool _loading = true;
+    private HubConnection? _hubConnection;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadProjects();
+        await SetupSignalR();
+    }
+
+    private async Task SetupSignalR()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/hubs/migration-progress"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<Guid, string, string?>("ReceiveStatusChange", async (jobId, status, errorMessage) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadProjects();
+                StateHasChanged();
+            });
+        });
+
+        _hubConnection.On<Guid, int, int, int, int, string?>("ReceiveJobCompleted", async (jobId, processed, total, failed, skipped, errorMessage) =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadProjects();
+                StateHasChanged();
+            });
+        });
+
+        await _hubConnection.StartAsync();
+        await _hubConnection.InvokeAsync("JoinDashboard");
     }
 
     private async Task LoadProjects()
@@ -132,4 +165,16 @@ else
         ProjectStatus.Completed => Color.Success,
         _ => Color.Default
     };
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+        {
+            try
+            {
+                await _hubConnection.DisposeAsync();
+            }
+            catch { }
+        }
+    }
 }

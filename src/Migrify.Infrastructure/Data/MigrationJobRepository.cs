@@ -99,4 +99,20 @@ public class MigrationJobRepository : IMigrationJobRepository
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.Status, x => x.Count);
     }
+
+    public async Task<List<MigrationJob>> GetAllWithProjectAsync(int? limit = null)
+    {
+        var query = _db.MigrationJobs
+            .AsNoTracking()
+            .Include(j => j.Project)
+            .OrderBy(j => j.Status == MigrationJobStatus.Running ? 0 :
+                          j.Status == MigrationJobStatus.Queued ? 1 :
+                          j.Status == MigrationJobStatus.Failed ? 2 : 3)
+            .ThenByDescending(j => j.UpdatedAt);
+
+        if (limit.HasValue)
+            return await query.Take(limit.Value).ToListAsync();
+
+        return await query.ToListAsync();
+    }
 }

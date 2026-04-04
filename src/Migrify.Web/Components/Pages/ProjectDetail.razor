@@ -10,6 +10,8 @@
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
 @inject IMigrationQueueService MigrationQueue
+@inject IConcurrencyLimitService LimitService
+@inject Migrify.Infrastructure.Services.SourceLimitProvider SourceLimitProvider
 @implements IAsyncDisposable
 
 <PageTitle>@(_project?.Name ?? "Project") - Migrify</PageTitle>
@@ -38,8 +40,8 @@ else
                     }
                 </div>
                 <div class="d-flex align-center gap-2">
-                    <MudChip T="string" Size="Size.Small" Color="@GetProjectStatusColor(_project.Status)">
-                        @_project.Status
+                    <MudChip T="string" Size="Size.Small" Color="@GetProjectStatusColor(_project.ComputedStatus)">
+                        @_project.ComputedStatus
                     </MudChip>
                     <MudTooltip Text="View All Logs">
                         <MudIconButton Icon="@Icons.Material.Filled.Description" Size="Size.Small"
@@ -170,6 +172,9 @@ else
             </MudCard>
         </MudItem>
     </MudGrid>
+
+    @* Concurrency Limits *@
+    <ConcurrencyLimitPanel Overview="@_concurrencyOverview" />
 
     @* Migration Jobs *@
     <div class="d-flex justify-space-between align-center mb-3">
@@ -439,6 +444,7 @@ else
     private bool _isDiscoveringDest;
     private HubConnection? _hubConnection;
     private HashSet<Guid> _selectedJobs = new();
+    private ConcurrencyOverview? _concurrencyOverview;
 
     protected override async Task OnInitializedAsync()
     {
@@ -508,6 +514,25 @@ else
             new("Projects", href: "/projects"),
             new(_project.Name, href: null, disabled: true)
         };
+
+        // Concurrency overview for this project
+        var tenantId = _project.M365Settings?.TenantId;
+        string? sourceKey = null;
+        var sourceType = _project.SourceConnectorType;
+
+        if (sourceType == SourceConnectorType.GoogleWorkspace)
+        {
+            sourceKey = _project.GoogleWorkspaceSettings?.Domain?.ToLowerInvariant();
+        }
+        else
+        {
+            // Use IMAP host from first job that has settings
+            var firstJobWithImap = _jobs.FirstOrDefault(j => j.ImapSettings?.Host is not null);
+            sourceKey = firstJobWithImap?.ImapSettings?.Host?.ToLowerInvariant();
+        }
+
+        _concurrencyOverview = LimitService.GetConcurrencyOverview(tenantId, sourceKey, sourceType);
+
         _loading = false;
     }
 
@@ -849,6 +874,7 @@ else
         if (jobs.Count > 0)
         {
             Snackbar.Add($"{jobs.Count} job(s) added to queue.", Severity.Success);
+            await LoadData();
             StateHasChanged();
         }
     }

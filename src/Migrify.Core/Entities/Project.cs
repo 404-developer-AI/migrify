@@ -14,4 +14,24 @@ public class Project
     public M365Settings? M365Settings { get; set; }
     public GoogleWorkspaceSettings? GoogleWorkspaceSettings { get; set; }
     public ICollection<DiscoveredMailbox> DiscoveredMailboxes { get; set; } = new List<DiscoveredMailbox>();
+
+    public ProjectStatus ComputedStatus
+    {
+        get
+        {
+            if (MigrationJobs.Count == 0)
+                return ProjectStatus.New;
+
+            if (MigrationJobs.Any(j => j.Status is MigrationJobStatus.Running or MigrationJobStatus.Queued))
+                return ProjectStatus.Active;
+
+            if (MigrationJobs.All(j => j.Status is MigrationJobStatus.Completed or MigrationJobStatus.Cancelled))
+                return ProjectStatus.Completed;
+
+            if (MigrationJobs.Any(j => j.Status is MigrationJobStatus.Completed or MigrationJobStatus.Failed))
+                return ProjectStatus.Active;
+
+            return ProjectStatus.New;
+        }
+    }
 }

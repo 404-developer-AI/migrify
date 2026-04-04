@@ -1,0 +1,51 @@
+@using Migrify.Core.Models
+
+@if (Overview is not null)
+{
+    <MudCard Class="mb-4" Elevation="0">
+        <MudCardContent>
+            <MudText Typo="Typo.subtitle1" Class="mb-3" Style="font-weight: 600;">Concurrency Limits</MudText>
+            <MudGrid Spacing="3">
+                <MudItem xs="12" md="4">
+                    @RenderLayer(Icons.Material.Outlined.Cloud, "Destination", Overview.Destination)
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    @RenderLayer(Icons.Material.Outlined.Email, "Source", Overview.Source)
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    @RenderLayer(Icons.Material.Outlined.Memory, "System", Overview.System)
+                </MudItem>
+            </MudGrid>
+        </MudCardContent>
+    </MudCard>
+}
+
+@code {
+    [Parameter] public ConcurrencyOverview? Overview { get; set; }
+
+    private RenderFragment RenderLayer(string icon, string title, ConcurrencyLayerStatus layer) => __builder =>
+    {
+        var percent = layer.Limit > 0 ? (double)layer.Occupancy / layer.Limit * 100 : 0;
+        var color = percent < 60 ? Color.Success : percent < 85 ? Color.Warning : Color.Error;
+
+        <div class="d-flex align-center gap-2 mb-2">
+            <MudIcon Icon="@icon" Size="Size.Small" Color="@color" />
+            <MudText Typo="Typo.body2" Style="font-weight: 600;">@title</MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                     Color="@GetConfidenceColor(layer.Confidence)" Class="ml-auto">
+                @layer.Confidence.ToString()
+            </MudChip>
+        </div>
+        <MudProgressLinear Value="@percent" Color="@color" Rounded="true" Size="Size.Medium" Class="mb-1" />
+        <MudText Typo="Typo.caption" Style="opacity: 0.7;">
+            @layer.Occupancy / @layer.Limit active
+        </MudText>
+    };
+
+    private static Color GetConfidenceColor(LimitConfidence confidence) => confidence switch
+    {
+        LimitConfidence.Known => Color.Success,
+        LimitConfidence.Calculated => Color.Info,
+        _ => Color.Warning
+    };
+}

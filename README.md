@@ -10,7 +10,7 @@
 Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's self-hosted mail server from 2003) to Microsoft 365 Exchange Online. And yes — it actually works now. Emails go in on one side and come out on the other. Most of the time.
 
 **Features so far:**
-- Project-based migration management with connector model (source + destination per project)
+- Project-based migration management with connector model (source + destination per project) and auto-computed project status
 - IMAP connection testing & mailbox exploration (password + OAuth2)
 - IMAP OAuth2 authentication (Gmail / Google Workspace)
 - Google Workspace source connector with service account & domain-wide delegation
@@ -43,6 +43,9 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 - Known provider detection (Gmail, Outlook, Yahoo, etc.) with provider-specific connection limits
 - Manual override for concurrency limits via Settings page with safety warnings
 - Bulk start: checkboxes with "Start Selected" and "Start All" buttons
+- Dashboard with cross-project job overview: live status, progress, queue position, and wait reasons
+- Concurrency limit panels: 3-layer overview (system/destination/source) on Dashboard and per project
+- Real-time dashboard updates via SignalR for all running/queued jobs
 - Clean admin dashboard with premium UI (thanks MudBlazor)
 
 ## Tech Stack
@@ -61,7 +64,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 
 **Work in progress.** But the kind of progress where emails actually migrate now. The foundation is there, the walls are up, and the roof is... getting there. Still wouldn't host a dinner party though.
 
-Current version: `v0.0.14`
+Current version: `v0.0.14c`
 
 The version numbering starts at 0.0.1 because even 1.0 feels too optimistic right now.
 
