@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Migrify.Core.Interfaces;
@@ -77,13 +78,27 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// Forward headers from reverse proxy (Nginx)
+if (app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
+{
+    app.UseForwardedHeaders(new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+    });
+}
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+// Skip HTTPS redirect when behind reverse proxy (Nginx handles SSL)
+if (!app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
+{
+    app.UseHttpsRedirection();
+}
+
 app.UseAntiforgery();
 
 app.UseAuthentication();
@@ -187,6 +202,9 @@ app.MapGet("/oauth/callback/google", async (
         return Results.Content(BuildOAuthCallbackHtml(false, "", ex.Message), "text/html");
     }
 });
+
+// Health check endpoint
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

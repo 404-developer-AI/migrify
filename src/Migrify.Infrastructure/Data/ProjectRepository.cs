@@ -61,6 +61,19 @@ public class ProjectRepository : IProjectRepository
         var entry = _db.Entry(project);
         if (entry.State == EntityState.Detached)
         {
+            // Check if child entities are new (Id not yet set) to avoid EF tracking conflicts
+            if (project.M365Settings is not null && project.M365Settings.Id == Guid.Empty)
+            {
+                project.M365Settings.Id = Guid.NewGuid();
+                project.M365Settings.ProjectId = project.Id;
+            }
+
+            if (project.GoogleWorkspaceSettings is not null && project.GoogleWorkspaceSettings.Id == Guid.Empty)
+            {
+                project.GoogleWorkspaceSettings.Id = Guid.NewGuid();
+                project.GoogleWorkspaceSettings.ProjectId = project.Id;
+            }
+
             _db.Projects.Update(project);
         }
 

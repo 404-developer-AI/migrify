@@ -272,7 +272,7 @@
                     return;
                 }
 
-                Project.GoogleWorkspaceSettings ??= new GoogleWorkspaceSettings();
+                Project.GoogleWorkspaceSettings ??= new GoogleWorkspaceSettings { ProjectId = Project.Id };
                 Project.GoogleWorkspaceSettings.ServiceAccountEmail = _serviceAccountEmail;
                 Project.GoogleWorkspaceSettings.TokenUri = _tokenUri;
                 Project.GoogleWorkspaceSettings.ImpersonationEmail = _impersonationEmail;

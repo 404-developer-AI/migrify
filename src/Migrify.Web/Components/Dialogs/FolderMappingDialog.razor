@@ -73,12 +73,18 @@
             <div class="d-flex gap-2 mb-4">
                 <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
                            StartIcon="@Icons.Material.Filled.AutoAwesome"
-                           OnClick="AutoMap" Disabled="_isLoadingSource || _isLoadingDest">
+                           OnClick="AutoMap" Disabled="_isLoadingSource || _isLoadingDest || _isMirroring">
                     Auto-map
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.ContentCopy"
+                           OnClick="MirrorFolders"
+                           Disabled="_isLoadingSource || _isLoadingDest || _isMirroring || _isCreatingFolder">
+                    Mirror Folders
                 </MudButton>
                 <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
                            StartIcon="@Icons.Material.Filled.Add"
-                           OnClick="AddMapping" Disabled="_isLoadingSource || _isLoadingDest">
+                           OnClick="AddMapping" Disabled="_isLoadingSource || _isLoadingDest || _isMirroring">
                     Add Mapping
                 </MudButton>
             </div>
@@ -171,13 +177,20 @@
             <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-3" />
             <MudText Typo="Typo.body2" Color="Color.Secondary">Creating folder on M365...</MudText>
         }
+
+        @* Mirroring progress indicator *@
+        @if (_isMirroring)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Secondary" Class="mt-3" />
+            <MudText Typo="Typo.body2" Color="Color.Secondary">Creating folders on M365... @_mirrorProgress</MudText>
+        }
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
         <MudButton Color="Color.Primary" Variant="Variant.Filled"
                    StartIcon="@Icons.Material.Filled.Save"
                    OnClick="Save"
-                   Disabled="@(_isLoadingSource || _isLoadingDest || _isSaving || _isCreatingFolder)">
+                   Disabled="@(_isLoadingSource || _isLoadingDest || _isSaving || _isCreatingFolder || _isMirroring)">
             @if (_isSaving)
             {
                 <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
@@ -211,6 +224,8 @@
     private bool _isLoadingDest;
     private bool _isSaving;
     private bool _isCreatingFolder;
+    private bool _isMirroring;
+    private string _mirrorProgress = "";
     private string? _sourceError;
     private string? _destError;
 
@@ -461,6 +476,147 @@
             row.DestinationFolderDisplayName = string.Empty;
             _pendingNewFolderRow = null;
         }
+    }
+
+    private async Task MirrorFolders()
+    {
+        if (_sourceFolders is null || _destFolders is null) return;
+
+        // Step 1: Auto-map standard folders first
+        AutoMap();
+        StateHasChanged();
+
+        // Step 2: Find remaining unmapped folders with messages
+        var unmapped = GetUnmappedFoldersWithMails();
+        if (!unmapped.Any())
+        {
+            Snackbar.Add("All folders with messages are already mapped.", Severity.Info);
+            return;
+        }
+
+        _isMirroring = true;
+        StateHasChanged();
+
+        try
+        {
+            var m365 = Project.M365Settings!;
+            var clientSecret = CredentialEncryptor.Decrypt(m365.EncryptedClientSecret!);
+
+            // Build lookup of existing M365 folders by display path
+            var existingByPath = new Dictionary<string, M365FolderInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in _destFolders)
+            {
+                var path = f.DisplayPath ?? f.DisplayName;
+                existingByPath.TryAdd(path, f);
+            }
+
+            // Track created folder IDs by clean path
+            var createdIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // Clean paths and sort by depth (parents first)
+            var plan = unmapped
+                .Select(src => (Source: src, CleanPath: StripImapPrefix(src.FullName)))
+                .OrderBy(x => x.CleanPath.Count(c => c == '/'))
+                .ToList();
+
+            int created = 0, failed = 0;
+
+            for (int i = 0; i < plan.Count; i++)
+            {
+                var (source, cleanPath) = plan[i];
+                _mirrorProgress = $"{i + 1} / {plan.Count}";
+                StateHasChanged();
+                await Task.Delay(1); // yield to UI thread
+
+                try
+                {
+                    var (folderId, displayName) = await EnsureFolderHierarchy(
+                        cleanPath, m365.TenantId!, m365.ClientId!, clientSecret,
+                        existingByPath, createdIds);
+
+                    _mappings.Add(new MappingRow
+                    {
+                        SourceFolderName = source.FullName,
+                        DestinationFolderId = folderId,
+                        DestinationFolderDisplayName = displayName
+                    });
+                    created++;
+                }
+                catch (Exception ex)
+                {
+                    Snackbar.Add($"Failed to create '{cleanPath}': {ex.Message}", Severity.Error);
+                    failed++;
+                }
+            }
+
+            var msg = $"Mirrored {created} folder(s).";
+            if (failed > 0) msg += $" {failed} failed.";
+            Snackbar.Add(msg, created > 0 ? Severity.Success : Severity.Warning);
+        }
+        finally
+        {
+            _isMirroring = false;
+            _mirrorProgress = "";
+            StateHasChanged();
+        }
+    }
+
+    private static string StripImapPrefix(string fullName)
+    {
+        if (fullName.StartsWith("[Gmail]/", StringComparison.OrdinalIgnoreCase))
+            return fullName["[Gmail]/".Length..];
+        if (fullName.StartsWith("[Google Mail]/", StringComparison.OrdinalIgnoreCase))
+            return fullName["[Google Mail]/".Length..];
+        // Dovecot/Courier servers use INBOX. prefix with . as delimiter
+        if (fullName.StartsWith("INBOX.", StringComparison.Ordinal) && fullName.Length > 6)
+            return fullName[6..].Replace('.', '/');
+        return fullName;
+    }
+
+    private async Task<(string FolderId, string DisplayName)> EnsureFolderHierarchy(
+        string cleanPath,
+        string tenantId, string clientId, string clientSecret,
+        Dictionary<string, M365FolderInfo> existingByPath,
+        Dictionary<string, string> createdIds)
+    {
+        var segments = cleanPath.Split('/');
+        string? parentId = null;
+        string pathSoFar = "";
+        string lastDisplayName = "";
+
+        for (int i = 0; i < segments.Length; i++)
+        {
+            pathSoFar = i == 0 ? segments[i] : $"{pathSoFar}/{segments[i]}";
+            lastDisplayName = segments[i];
+
+            // Already created during this mirror run?
+            if (createdIds.TryGetValue(pathSoFar, out var existingId))
+            {
+                parentId = existingId;
+                continue;
+            }
+
+            // Already exists on M365?
+            if (existingByPath.TryGetValue(pathSoFar, out var existingFolder))
+            {
+                createdIds[pathSoFar] = existingFolder.Id;
+                parentId = existingFolder.Id;
+                continue;
+            }
+
+            // Create it
+            var newFolder = await M365Explorer.CreateFolderAsync(
+                tenantId, clientId, clientSecret, Job.DestinationEmail,
+                segments[i], parentId);
+
+            var folderWithPath = newFolder with { DisplayPath = pathSoFar };
+            _destFolders!.Add(folderWithPath);
+            existingByPath[pathSoFar] = folderWithPath;
+            createdIds[pathSoFar] = folderWithPath.Id;
+            parentId = folderWithPath.Id;
+        }
+
+        return (createdIds[cleanPath], lastDisplayName);
     }
 
     private void AutoMap()

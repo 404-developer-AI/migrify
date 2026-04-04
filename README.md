@@ -18,7 +18,7 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 
 **Destination connector**
 - Microsoft 365 via Graph SDK (app-only auth)
-- Per-job folder mapping with auto-map, manual mapping, and inline folder creation
+- Per-job folder mapping with auto-map, mirror folders (auto-create missing folders on M365), manual mapping, and inline folder creation
 
 **Migration engine**
 - Full copy and incremental migration modes
@@ -60,13 +60,31 @@ Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's 
 | IMAP | MailKit |
 | M365 | Microsoft Graph SDK |
 | Real-time | SignalR |
-| Deployment | Docker + Nginx |
+| Deployment | Docker + Nginx + Let's Encrypt |
+
+**Deployment**
+- One-string install: single command sets up everything on a fresh Ubuntu VPS
+- Interactive installer asks for domain, passwords, and email — generates all configuration
+- Automatic SSL via Let's Encrypt with auto-renewal
+- One-string update: pull latest version, restart, data intact
+- Docker volumes for persistent data (database, logs, certificates)
+- CI/CD via GitHub Actions → GitHub Container Registry
+
+## Quick Start
+
+```bash
+# Install on a fresh Ubuntu VPS (as root):
+curl -fsSL https://raw.githubusercontent.com/404-developer-AI/migrify/main/deploy/scripts/install.sh | bash
+
+# Update to latest version:
+curl -fsSL https://raw.githubusercontent.com/404-developer-AI/migrify/main/deploy/scripts/update.sh | bash
+```
 
 ## Status
 
 **Work in progress.** But the kind of progress where emails actually migrate now. The foundation is there, the walls are up, and the roof is... getting there. Still wouldn't host a dinner party though.
 
-Current version: `v0.0.14d`
+Current version: `v0.1.0`
 
 The version numbering starts at 0.0.1 because even 1.0 feels too optimistic right now.
 
@@ -76,7 +94,7 @@ Technically? Yes. Small migrations are actually working. Should you trust your 5
 
 ## Roadmap
 
-There is one. It's ambitious. It currently involves data retention policies and eventually Docker deployment. The email migration part? That's actually done. Failed mails can be retried, interrupted migrations can be resumed, and incremental sync re-runs only fetch new emails. Wild.
+There is one. It's ambitious. It currently involves data retention policies and multi-tenancy. The email migration part? That's actually done. Failed mails can be retried, interrupted migrations can be resumed, and incremental sync re-runs only fetch new emails. Docker deployment? Also done now. Wild.
 
 ## License
 

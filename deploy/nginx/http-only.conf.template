@@ -1,0 +1,14 @@
+# Temporary HTTP-only config for initial SSL certificate request
+server {
+    listen 80;
+    server_name ${MIGRIFY_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 200 'Migrify is starting — SSL setup in progress...';
+        add_header Content-Type text/plain;
+    }
+}

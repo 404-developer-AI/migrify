@@ -162,12 +162,12 @@
 
         try
         {
-            Project.M365Settings ??= new M365Settings();
-            Project.M365Settings.TenantId = _tenantId;
-            Project.M365Settings.ClientId = _clientId;
+            Project.M365Settings ??= new M365Settings { ProjectId = Project.Id };
+            Project.M365Settings.TenantId = _tenantId?.Trim();
+            Project.M365Settings.ClientId = _clientId?.Trim();
 
             if (!string.IsNullOrEmpty(_clientSecret))
-                Project.M365Settings.EncryptedClientSecret = CredentialEncryptor.Encrypt(_clientSecret);
+                Project.M365Settings.EncryptedClientSecret = CredentialEncryptor.Encrypt(_clientSecret.Trim());
 
             await ProjectRepository.UpdateAsync(Project);
             Snackbar.Add("M365 destination connector saved.", Severity.Success);
