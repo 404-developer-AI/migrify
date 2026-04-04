@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 # Create non-root user
 RUN groupadd -r migrify && useradd -r -g migrify -d /app -s /sbin/nologin migrify
 
-# Create directories for logs
-RUN mkdir -p /app/logs && chown -R migrify:migrify /app
+# Create directories for logs and data protection keys
+RUN mkdir -p /app/logs /app/keys && chown -R migrify:migrify /app
 
 COPY --from=build /app/publish .
 RUN chown -R migrify:migrify /app

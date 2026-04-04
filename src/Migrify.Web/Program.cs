@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -12,6 +13,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Load local overrides (gitignored, for dev credentials)
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+// Persist DataProtection keys so antiforgery tokens survive container restarts
+var dataProtectionPath = Path.Combine(AppContext.BaseDirectory, "keys");
+Directory.CreateDirectory(dataProtectionPath);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath))
+    .SetApplicationName("Migrify");
 
 // File logging to logs/ folder
 var logsDir = Path.Combine(AppContext.BaseDirectory, "logs");
@@ -206,6 +214,7 @@ app.MapGet("/oauth/callback/google", async (
 // Health check endpoint
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
+app.UseStaticFiles();
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
