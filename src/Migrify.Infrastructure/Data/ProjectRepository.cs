@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Migrify.Core.Entities;
 using Migrify.Core.Interfaces;
 
@@ -7,10 +8,12 @@ namespace Migrify.Infrastructure.Data;
 public class ProjectRepository : IProjectRepository
 {
     private readonly ApplicationDbContext _db;
+    private readonly ILogger<ProjectRepository> _logger;
 
-    public ProjectRepository(ApplicationDbContext db)
+    public ProjectRepository(ApplicationDbContext db, ILogger<ProjectRepository> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     public async Task<List<Project>> GetAllAsync()
@@ -58,23 +61,35 @@ public class ProjectRepository : IProjectRepository
     {
         project.UpdatedAt = DateTime.UtcNow;
 
-        var entry = _db.Entry(project);
-        if (entry.State == EntityState.Detached)
+        // Blazor Server shares a scoped DbContext across the circuit lifetime.
+        // Clear tracked entities to prevent conflicts when attaching an untracked instance.
+        _db.ChangeTracker.Clear();
+
+        // Attach the project as Modified (existing entity)
+        _db.Projects.Update(project);
+
+        // Fix entity states: Update() marks everything as Modified, but new child entities
+        // need to be Added (they don't exist in the database yet).
+        if (project.M365Settings is not null)
         {
-            // Check if child entities are new (Id not yet set) to avoid EF tracking conflicts
-            if (project.M365Settings is not null && project.M365Settings.Id == Guid.Empty)
+            var m365Entry = _db.Entry(project.M365Settings);
+            if (project.M365Settings.Id == Guid.Empty)
             {
                 project.M365Settings.Id = Guid.NewGuid();
                 project.M365Settings.ProjectId = project.Id;
+                m365Entry.State = EntityState.Added;
             }
+        }
 
-            if (project.GoogleWorkspaceSettings is not null && project.GoogleWorkspaceSettings.Id == Guid.Empty)
+        if (project.GoogleWorkspaceSettings is not null)
+        {
+            var gwsEntry = _db.Entry(project.GoogleWorkspaceSettings);
+            if (project.GoogleWorkspaceSettings.Id == Guid.Empty)
             {
                 project.GoogleWorkspaceSettings.Id = Guid.NewGuid();
                 project.GoogleWorkspaceSettings.ProjectId = project.Id;
+                gwsEntry.State = EntityState.Added;
             }
-
-            _db.Projects.Update(project);
         }
 
         await _db.SaveChangesAsync();
