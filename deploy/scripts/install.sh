@@ -18,6 +18,7 @@ BOLD='\033[1m'
 INSTALL_DIR="/opt/migrify"
 REPORT_FILE="$INSTALL_DIR/install-report.log"
 REPO_URL="https://github.com/404-developer-AI/migrify.git"
+ENABLE_SSL="false"
 
 # ---- Helper functions ----
 
@@ -177,18 +178,24 @@ collect_configuration() {
     echo ""
 
     # Domain
-    ask "Domain name (FQDN) for Migrify" "" MIGRIFY_DOMAIN
+    ask "Domain name or IP address for Migrify" "" MIGRIFY_DOMAIN
     while [ -z "$MIGRIFY_DOMAIN" ]; do
-        print_error "Domain name is required (e.g., migrify.example.com)"
-        ask "Domain name (FQDN) for Migrify" "" MIGRIFY_DOMAIN
+        print_error "Domain name or IP is required (e.g., migrify.example.com or 192.168.1.100)"
+        ask "Domain name or IP address for Migrify" "" MIGRIFY_DOMAIN
     done
 
-    # Let's Encrypt email
-    ask "Email for Let's Encrypt SSL certificate" "" LETSENCRYPT_EMAIL
-    while [ -z "$LETSENCRYPT_EMAIL" ]; do
-        print_error "Email is required for Let's Encrypt"
+    # SSL
+    ask_yes_no "Enable SSL with Let's Encrypt? (requires public domain with DNS pointing to this server)" "y" ENABLE_SSL
+    if [ "$ENABLE_SSL" = "true" ]; then
         ask "Email for Let's Encrypt SSL certificate" "" LETSENCRYPT_EMAIL
-    done
+        while [ -z "$LETSENCRYPT_EMAIL" ]; do
+            print_error "Email is required for Let's Encrypt"
+            ask "Email for Let's Encrypt SSL certificate" "" LETSENCRYPT_EMAIL
+        done
+    else
+        LETSENCRYPT_EMAIL=""
+        print_warn "SSL disabled — app will be accessible via HTTP only"
+    fi
 
     # PostgreSQL password
     local default_pg_pass
@@ -237,7 +244,12 @@ confirm_configuration() {
     print_step "Configuration summary"
     echo ""
     echo -e "  ${BOLD}Domain:${NC}           $MIGRIFY_DOMAIN"
-    echo -e "  ${BOLD}SSL Email:${NC}        $LETSENCRYPT_EMAIL"
+    if [ "$ENABLE_SSL" = "true" ]; then
+        echo -e "  ${BOLD}SSL:${NC}              Enabled (Let's Encrypt)"
+        echo -e "  ${BOLD}SSL Email:${NC}        $LETSENCRYPT_EMAIL"
+    else
+        echo -e "  ${BOLD}SSL:${NC}              Disabled (HTTP only)"
+    fi
     echo -e "  ${BOLD}PostgreSQL User:${NC}  $POSTGRES_USER"
     echo -e "  ${BOLD}PostgreSQL Pass:${NC}  ********"
     echo -e "  ${BOLD}Admin Email:${NC}      $ADMIN_EMAIL"
@@ -278,7 +290,8 @@ create_env_file() {
 # Domain
 MIGRIFY_DOMAIN=$MIGRIFY_DOMAIN
 
-# Let's Encrypt
+# SSL
+ENABLE_SSL=$ENABLE_SSL
 LETSENCRYPT_EMAIL=$LETSENCRYPT_EMAIL
 
 # PostgreSQL
@@ -295,6 +308,20 @@ EOF
 
     chmod 600 "$INSTALL_DIR/.env"
     print_ok "Configuration written to $INSTALL_DIR/.env"
+}
+
+setup_nginx_config() {
+    print_step "Configuring Nginx..."
+
+    local nginx_dir="$INSTALL_DIR/deploy/nginx"
+
+    if [ "$ENABLE_SSL" = "true" ]; then
+        cp "$nginx_dir/default.conf.template" "$nginx_dir/active.conf.template"
+        print_ok "Nginx configured with SSL"
+    else
+        cp "$nginx_dir/no-ssl.conf.template" "$nginx_dir/active.conf.template"
+        print_ok "Nginx configured without SSL (HTTP only)"
+    fi
 }
 
 build_and_start() {
@@ -354,6 +381,10 @@ build_and_start() {
 }
 
 setup_ssl() {
+    if [ "$ENABLE_SSL" != "true" ]; then
+        return
+    fi
+
     print_step "Setting up SSL certificate..."
 
     cd "$INSTALL_DIR"
@@ -368,21 +399,39 @@ start_nginx() {
     docker compose up -d nginx
     sleep 3
 
-    # Verify HTTPS is working
-    if curl -sf --max-time 5 "https://$MIGRIFY_DOMAIN/health" > /dev/null 2>&1; then
-        print_ok "HTTPS is working"
+    if [ "$ENABLE_SSL" = "true" ]; then
+        # Verify HTTPS
+        if curl -sf --max-time 5 "https://$MIGRIFY_DOMAIN/health" > /dev/null 2>&1; then
+            print_ok "HTTPS is working"
+        else
+            print_warn "HTTPS check failed — the app may still be starting, or DNS is not yet pointing to this server"
+        fi
     else
-        print_warn "HTTPS check failed — the app may still be starting, or DNS is not yet pointing to this server"
+        # Verify HTTP
+        if curl -sf --max-time 5 "http://$MIGRIFY_DOMAIN/health" > /dev/null 2>&1; then
+            print_ok "HTTP is working"
+        else
+            # Also try localhost in case domain doesn't resolve yet
+            if curl -sf --max-time 5 "http://localhost/health" > /dev/null 2>&1; then
+                print_ok "HTTP is working (via localhost)"
+            else
+                print_warn "HTTP check failed — the app may still be starting"
+            fi
+        fi
     fi
 }
 
 setup_cert_renewal() {
+    if [ "$ENABLE_SSL" != "true" ]; then
+        return
+    fi
+
     print_step "Setting up automatic SSL renewal..."
 
     cd "$INSTALL_DIR"
 
     # Start certbot renewal container
-    docker compose up -d certbot
+    docker compose --profile ssl up -d certbot
 
     # Also add crontab as backup
     CRON_CMD="0 3 * * * $INSTALL_DIR/deploy/scripts/renew-cert.sh $INSTALL_DIR >> /var/log/migrify-certbot.log 2>&1"
@@ -395,8 +444,19 @@ setup_cert_renewal() {
 write_report() {
     print_step "Writing installation report..."
 
-    local app_version
-    app_version=$(docker compose -f "$INSTALL_DIR/docker-compose.yml" exec app curl -sf http://localhost:8080/health 2>/dev/null | grep -o '"timestamp":"[^"]*"' | head -1 || echo "unknown")
+    if [ "$ENABLE_SSL" = "true" ]; then
+        ACCESS_URL="https://$MIGRIFY_DOMAIN"
+        SSL_SECTION="SSL CERTIFICATE
+  Provider:       Let's Encrypt
+  Email:          $LETSENCRYPT_EMAIL
+  Domain:         $MIGRIFY_DOMAIN
+  Auto-renewal:   Enabled (daily check at 03:00)"
+    else
+        ACCESS_URL="http://$MIGRIFY_DOMAIN"
+        SSL_SECTION="SSL CERTIFICATE
+  Status:         Disabled (HTTP only)
+  Note:           Run the installer again with SSL enabled when ready"
+    fi
 
     cat > "$REPORT_FILE" <<EOF
 ================================================================================
@@ -410,7 +470,7 @@ INSTALLATION DIRECTORY
   $INSTALL_DIR
 
 ACCESS
-  URL:            https://$MIGRIFY_DOMAIN
+  URL:            $ACCESS_URL
   Admin Email:    $ADMIN_EMAIL
   Admin Password: $ADMIN_PASSWORD
 
@@ -424,11 +484,7 @@ POSTGRESQL DATABASE
 ENCRYPTION
   Key (base64):   $MIGRIFY_ENCRYPTION_KEY
 
-SSL CERTIFICATE
-  Provider:       Let's Encrypt
-  Email:          $LETSENCRYPT_EMAIL
-  Domain:         $MIGRIFY_DOMAIN
-  Auto-renewal:   Enabled (daily check at 03:00)
+$SSL_SECTION
 
 DOCKER CONTAINERS
 $(docker compose -f "$INSTALL_DIR/docker-compose.yml" ps --format "  {{.Name}}\t{{.Status}}" 2>/dev/null || echo "  (could not retrieve container status)")
@@ -457,18 +513,28 @@ EOF
 }
 
 print_summary() {
+    if [ "$ENABLE_SSL" = "true" ]; then
+        ACCESS_URL="https://$MIGRIFY_DOMAIN"
+    else
+        ACCESS_URL="http://$MIGRIFY_DOMAIN"
+    fi
+
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║${NC}  ${BOLD}Installation complete!${NC}                          ${GREEN}║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  ${BOLD}URL:${NC}            https://$MIGRIFY_DOMAIN"
+    echo -e "  ${BOLD}URL:${NC}            $ACCESS_URL"
     echo -e "  ${BOLD}Admin login:${NC}    $ADMIN_EMAIL"
     echo -e "  ${BOLD}Admin password:${NC} $ADMIN_PASSWORD"
     echo ""
+    if [ "$ENABLE_SSL" != "true" ]; then
+        echo -e "  ${YELLOW}Note: SSL is disabled. To enable later, re-run the installer.${NC}"
+        echo ""
+    fi
     echo -e "  ${BOLD}Install report:${NC} $REPORT_FILE"
     echo ""
-    echo -e "${YELLOW}  ╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}  ╔═════════════════════════════════════════════════════════���══╗${NC}"
     echo -e "${YELLOW}  ║${NC}  ${BOLD}${RED}WARNING:${NC} The install report contains passwords.           ${YELLOW}║${NC}"
     echo -e "${YELLOW}  ║${NC}  Save what you need, then delete the report:             ${YELLOW}║${NC}"
     echo -e "${YELLOW}  ║${NC}  ${BOLD}rm $REPORT_FILE${NC}$(printf '%*s' $((23 - ${#REPORT_FILE})) '')${YELLOW}║${NC}"
@@ -494,6 +560,7 @@ main() {
 
     clone_repository
     create_env_file
+    setup_nginx_config
     build_and_start
     setup_ssl
     start_nginx
