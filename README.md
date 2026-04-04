@@ -2,51 +2,39 @@
 
 **A universal mailbox migration tool that moves any mailbox type to Microsoft 365, fast and hopefully reliable.**
 
-> Built by a non-developer with zero coding skills, mass amounts of coffee, and an mass amount of AI prompts.
+> Built by a non-developer with zero coding skills, mass amounts of coffee, and a mass amount of AI prompts.
 > This is vibe coding at its finest. If it works, don't ask why. If it doesn't, yeah... that tracks.
 
 ## What does it do?
 
 Migrify migrates email from IMAP mailboxes (Gmail, Outlook, Yahoo, your uncle's self-hosted mail server from 2003) to Microsoft 365 Exchange Online. And yes — it actually works now. Emails go in on one side and come out on the other. Most of the time.
 
-**Features so far:**
-- Project-based migration management with connector model (source + destination per project) and auto-computed project status
-- IMAP connection testing & mailbox exploration (password + OAuth2)
-- IMAP OAuth2 authentication (Gmail / Google Workspace)
-- Google Workspace source connector with service account & domain-wide delegation
-- Microsoft 365 destination connector via Graph SDK (app-only auth)
-- M365 mailbox exploration (including subfolders)
-- Bulk mailbox discovery: Google Admin SDK (source) + Graph API User.Read.All (destination)
-- Migration job management per project with autocomplete mailbox selection
-- Per-job folder mapping: source (IMAP) to destination (M365) folder mapping
-- Auto-map for common folders (Inbox, Sent, Drafts, etc.)
-- M365 folder & subfolder creation from within the mapping dialog
-- Validation warnings for unmapped folders containing emails
-- Migration engine: IMAP → M365 email migration per folder mapping
-- Real-time progress tracking via SignalR (live progress bar, status, folder updates)
-- Job options: date range filter, duplicate detection (Message-ID), full copy & incremental mode
-- Rate limiting for Graph API compliance (10K req/10min)
-- Memory-efficient streaming with IMAP SEARCH-based date filtering
-- Per-job start/cancel controls with live progress updates
-- Per-mail error & skip logging with searchable log pages
-- Project-level and job-level log views with type filtering
-- Real-time log updates via SignalR during active migrations
-- Per-mail retry and bulk retry for failed messages
-- Automatic retry with exponential backoff for transient errors (429/503/504/408)
-- Resume interrupted migrations from checkpoint (skips already-processed messages)
-- Incremental sync: auto-fill date range from last successful run for re-runs
-- Resume or start fresh dialog when re-running jobs with checkpoints (resume re-evaluates skipped/failed messages)
-- Job timing info: start time, end time, and duration visible on status chips
-- Parallel migration engine: multiple jobs run simultaneously
-- Global FIFO queue with Queued status and cancel-from-queue support
+### Features
+
+**Source connectors**
+- Manual IMAP with password or OAuth2 authentication
+- Google Workspace with service account & domain-wide delegation
+- Bulk mailbox discovery via Google Admin SDK and Graph API
+
+**Destination connector**
+- Microsoft 365 via Graph SDK (app-only auth)
+- Per-job folder mapping with auto-map, manual mapping, and inline folder creation
+
+**Migration engine**
+- Full copy and incremental migration modes
+- Date range filtering, duplicate detection (Message-ID), and rate limiting (Graph API compliant)
+- Parallel execution: multiple jobs run simultaneously with a global FIFO queue
 - Smart concurrency limits: 3-layer model (system resources, per M365 tenant, per source server)
-- Known provider detection (Gmail, Outlook, Yahoo, etc.) with provider-specific connection limits
-- Manual override for concurrency limits via Settings page with safety warnings
-- Bulk start: checkboxes with "Start Selected" and "Start All" buttons
-- Dashboard with cross-project job overview: live status, progress, queue position, and wait reasons
-- Concurrency limit panels: 3-layer overview (system/destination/source) on Dashboard and per project
-- Real-time dashboard updates via SignalR for all running/queued jobs
-- Clean admin dashboard with premium UI (thanks MudBlazor)
+- Resume interrupted migrations from checkpoint (re-evaluates skipped/failed messages)
+- Automatic retry with exponential backoff for transient errors (429/503/504/408)
+- Per-mail retry and bulk retry for failed messages
+
+**Monitoring & UI**
+- Real-time progress tracking via SignalR (live progress bars, status chips, folder updates)
+- Dashboard with cross-project job overview, queue positions, and wait reasons
+- Concurrency limit panels with per-layer occupancy and confidence indicators
+- Searchable migration logs at project and job level with type filtering
+- Premium dark/light UI with MudBlazor
 
 ## Tech Stack
 
@@ -74,7 +62,7 @@ Technically? Yes. Small migrations are actually working. Should you trust your 5
 
 ## Roadmap
 
-There is one. It's ambitious. It currently involves smart queue management and eventually Docker deployment. The email migration part? That's actually done. Failed mails can be retried, interrupted migrations can be resumed, and incremental sync re-runs only fetch new emails. Wild.
+There is one. It's ambitious. It currently involves data retention policies and eventually Docker deployment. The email migration part? That's actually done. Failed mails can be retried, interrupted migrations can be resumed, and incremental sync re-runs only fetch new emails. Wild.
 
 ## License
 
