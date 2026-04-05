@@ -33,6 +33,10 @@ public class MigrationJob
     public string? CurrentFolder { get; set; }
     public string? ErrorMessage { get; set; }
 
+    // CalDAV discovery
+    public CalDavSupportStatus CalDavSupportStatus { get; set; } = CalDavSupportStatus.Unknown;
+    public string? CalDavBaseUrl { get; set; }
+
     public Project Project { get; set; } = null!;
     public ImapSettings? ImapSettings { get; set; }
     public ICollection<FolderMapping> FolderMappings { get; set; } = new List<FolderMapping>();

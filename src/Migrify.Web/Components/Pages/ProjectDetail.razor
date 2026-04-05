@@ -226,6 +226,7 @@ else
                 <MudTh>Mapping</MudTh>
                 <MudTh>Options</MudTh>
                 <MudTh>Status</MudTh>
+                <MudTh>CalDAV</MudTh>
                 <MudTh>Created</MudTh>
                 <MudTh Style="width: 220px;">Actions</MudTh>
             </HeaderContent>
@@ -353,6 +354,29 @@ else
                         <MudText Typo="Typo.caption" Color="Color.Error">@context.ErrorMessage</MudText>
                     }
                 </MudTd>
+                <MudTd DataLabel="CalDAV">
+                    @switch (context.CalDavSupportStatus)
+                    {
+                        case CalDavSupportStatus.Supported:
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">
+                                Supported
+                            </MudChip>
+                            break;
+                        case CalDavSupportStatus.NotSupported:
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+                                Not Supported
+                            </MudChip>
+                            break;
+                        case CalDavSupportStatus.NotApplicable:
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                                N/A
+                            </MudChip>
+                            break;
+                        default:
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">Unknown</MudText>
+                            break;
+                    }
+                </MudTd>
                 <MudTd DataLabel="Created">
                     <MudText Typo="Typo.body2">@context.CreatedAt.ToString("dd-MM-yyyy HH:mm")</MudText>
                 </MudTd>
@@ -363,6 +387,14 @@ else
                             <MudIconButton Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small"
                                            Color="Color.Primary"
                                            OnClick="@(() => OpenExploreDialog(context))" />
+                        </MudTooltip>
+                    }
+                    @if (context.CalDavSupportStatus == CalDavSupportStatus.Supported && !string.IsNullOrEmpty(context.CalDavBaseUrl))
+                    {
+                        <MudTooltip Text="Explore CalDAV Calendars">
+                            <MudIconButton Icon="@Icons.Material.Filled.CalendarMonth" Size="Size.Small"
+                                           Color="Color.Primary"
+                                           OnClick="@(() => OpenCalDavExploreDialog(context))" />
                         </MudTooltip>
                     }
                     @if (_project.M365Settings is not null && !string.IsNullOrEmpty(_project.M365Settings.TenantId))
@@ -675,11 +707,28 @@ else
     {
         var parameters = new DialogParameters
         {
-            { nameof(ImapExploreDialog.Job), job }
+            { nameof(ImapExploreDialog.Job), job },
+            { nameof(ImapExploreDialog.SourceConnectorType), _project!.SourceConnectorType }
         };
 
         var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
-        await DialogService.ShowAsync<ImapExploreDialog>("Explore Mailbox", parameters, options);
+        var dialog = await DialogService.ShowAsync<ImapExploreDialog>("Explore Mailbox", parameters, options);
+        await dialog.Result;
+
+        // Reload jobs to pick up CalDAV discovery changes
+        _jobs = await JobRepository.GetByProjectIdAsync(ProjectId);
+        StateHasChanged();
+    }
+
+    private async Task OpenCalDavExploreDialog(MigrationJob job)
+    {
+        var parameters = new DialogParameters
+        {
+            { nameof(CalDavExploreDialog.Job), job }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true };
+        await DialogService.ShowAsync<CalDavExploreDialog>("Explore CalDAV Calendars", parameters, options);
     }
 
     private async Task OpenM365ExploreDialog(MigrationJob job)

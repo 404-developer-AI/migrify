@@ -1,0 +1,147 @@
+@inject ICalDavExplorer CalDavExplorer
+@inject ICredentialEncryptor CredentialEncryptor
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Explore Calendars — @Job.SourceEmail</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_result is not null && _result.Success)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-2">
+                @_result.Calendars.Count calendar(s) — @_result.Calendars.Sum(c => c.EventCount).ToString("N0") total events
+            </MudText>
+
+            <MudTable Items="_result.Calendars" Hover="true" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Calendar</MudTh>
+                    <MudTh>Color</MudTh>
+                    <MudTh Style="text-align: right;">Events</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Calendar">
+                        <MudText Typo="Typo.body2">@context.DisplayName</MudText>
+                    </MudTd>
+                    <MudTd DataLabel="Color">
+                        @if (!string.IsNullOrEmpty(context.Color))
+                        {
+                            <div style="width: 20px; height: 20px; border-radius: 4px; background-color: @context.Color;" />
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">—</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Events" Style="text-align: right;">
+                        <MudText Typo="Typo.body2">@context.EventCount.ToString("N0")</MudText>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+        else if (_result is not null && !_result.Success)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">
+                @_result.ErrorMessage
+            </MudAlert>
+        }
+        else if (_isExploring)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-3" />
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Connecting to CalDAV server and discovering calendars...
+            </MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Click "Explore" to connect to the CalDAV server and retrieve calendar information.
+            </MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Close</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.CalendarMonth"
+                   OnClick="Explore" Disabled="_isExploring">
+            @if (_isExploring)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                <span>Exploring...</span>
+            }
+            else
+            {
+                <span>Explore</span>
+            }
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public MigrationJob Job { get; set; } = null!;
+
+    private CalDavExploreResult? _result;
+    private bool _isExploring;
+
+    private async Task Explore()
+    {
+        var imap = Job.ImapSettings;
+        if (imap is null || string.IsNullOrWhiteSpace(imap.Username))
+        {
+            Snackbar.Add("IMAP settings are not configured for this job.", Severity.Warning);
+            return;
+        }
+
+        if (imap.AuthType == ImapAuthType.OAuth2)
+        {
+            Snackbar.Add("CalDAV explore is not yet supported for OAuth2 accounts. Only password authentication is currently supported.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(imap.EncryptedPassword))
+        {
+            Snackbar.Add("No IMAP password configured. Edit the job to set one.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(Job.CalDavBaseUrl))
+        {
+            Snackbar.Add("No CalDAV URL discovered. Run IMAP explore first to detect CalDAV support.", Severity.Warning);
+            return;
+        }
+
+        _isExploring = true;
+        _result = null;
+        StateHasChanged();
+
+        try
+        {
+            var password = CredentialEncryptor.Decrypt(imap.EncryptedPassword);
+            _result = await CalDavExplorer.ExploreAsync(Job.CalDavBaseUrl, imap.Username, password);
+
+            if (_result.Success)
+            {
+                Snackbar.Add($"Found {_result.Calendars.Count} calendar(s) with {_result.Calendars.Sum(c => c.EventCount):N0} events.", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add($"Explore failed: {_result.ErrorMessage}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isExploring = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Close() => MudDialog.Close();
+}

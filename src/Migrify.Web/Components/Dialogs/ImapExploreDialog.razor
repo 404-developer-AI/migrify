@@ -2,6 +2,7 @@
 @inject ICredentialEncryptor CredentialEncryptor
 @inject IImapOAuthCredentialProvider OAuthCredentialProvider
 @inject IMigrationJobRepository JobRepository
+@inject ICalDavDiscoveryService CalDavDiscovery
 @inject ISnackbar Snackbar
 
 <MudDialog>
@@ -48,6 +49,36 @@
                     </MudTd>
                 </RowTemplate>
             </MudTable>
+
+            @* CalDAV discovery result *@
+            @if (_calDavStatus is not null)
+            {
+                <MudDivider Class="my-3" />
+                <div class="d-flex align-center gap-2">
+                    <MudIcon Icon="@Icons.Material.Filled.CalendarMonth" Size="Size.Small" />
+                    <MudText Typo="Typo.subtitle2">CalDAV:</MudText>
+                    @if (_calDavStatus == CalDavSupportStatus.Supported)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Supported</MudChip>
+                        @if (!string.IsNullOrEmpty(_calDavProviderName))
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">(@_calDavProviderName)</MudText>
+                        }
+                    }
+                    else if (_calDavStatus == CalDavSupportStatus.NotSupported)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">Not detected</MudChip>
+                    }
+                    else if (_calDavStatus == CalDavSupportStatus.NotApplicable)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">N/A — Google Workspace</MudChip>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Unknown</MudText>
+                    }
+                </div>
+            }
         }
         else if (_result is not null && !_result.Success)
         {
@@ -94,8 +125,13 @@
     [Parameter]
     public MigrationJob Job { get; set; } = null!;
 
+    [Parameter]
+    public SourceConnectorType SourceConnectorType { get; set; }
+
     private ImapExploreResult? _result;
     private bool _isExploring;
+    private CalDavSupportStatus? _calDavStatus;
+    private string? _calDavProviderName;
 
     private async Task Explore()
     {
@@ -143,6 +179,10 @@
             {
                 imap.LastTestedServerAddress = _result.ServerAddress;
                 imap.ResolvedIpAddress = _result.ResolvedIpAddress;
+
+                // CalDAV discovery (non-blocking — errors don't affect IMAP explore)
+                await RunCalDavDiscoveryAsync();
+
                 await JobRepository.UpdateAsync(Job);
 
                 Snackbar.Add($"Found {_result.Folders.Count} folder(s) with {_result.Folders.Sum(f => f.MessageCount):N0} messages.", Severity.Success);
@@ -163,5 +203,31 @@
         }
     }
 
-    private void Close() => MudDialog.Close();
+    private async Task RunCalDavDiscoveryAsync()
+    {
+        try
+        {
+            if (SourceConnectorType == SourceConnectorType.GoogleWorkspace)
+            {
+                Job.CalDavSupportStatus = CalDavSupportStatus.NotApplicable;
+                Job.CalDavBaseUrl = null;
+                _calDavStatus = CalDavSupportStatus.NotApplicable;
+                return;
+            }
+
+            var caldavResult = await CalDavDiscovery.DiscoverAsync(Job.SourceEmail);
+            Job.CalDavSupportStatus = caldavResult.Status;
+            Job.CalDavBaseUrl = caldavResult.BaseUrl;
+            _calDavStatus = caldavResult.Status;
+            _calDavProviderName = caldavResult.ProviderName;
+        }
+        catch
+        {
+            // CalDAV discovery failure should never break IMAP explore
+            Job.CalDavSupportStatus = CalDavSupportStatus.Unknown;
+            _calDavStatus = CalDavSupportStatus.Unknown;
+        }
+    }
+
+    private void Close() => MudDialog.Close(DialogResult.Ok(true));
 }

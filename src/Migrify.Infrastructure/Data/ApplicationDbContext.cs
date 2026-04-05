@@ -50,6 +50,9 @@ public class ApplicationDbContext : IdentityDbContext
             entity.Property(e => e.CurrentFolder).HasMaxLength(500);
             entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
 
+            entity.Property(e => e.CalDavSupportStatus).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.CalDavBaseUrl).HasMaxLength(500);
+
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.MigrationJobs)
                 .HasForeignKey(e => e.ProjectId)

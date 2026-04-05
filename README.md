@@ -31,6 +31,11 @@ What started as "let's see if this is even possible" is now a fully functional m
 - Automatic retry with exponential backoff for transient errors (429/503/504/408)
 - Per-mail retry and bulk retry for failed messages
 
+**Calendar discovery (v0.1.2)**
+- CalDAV support detection per mailbox (well-known URLs, SRV records, provider presets)
+- CalDAV calendar explorer: browse calendars with event counts
+- CalDAV status column in job overview
+
 **Monitoring & UI**
 - Real-time progress tracking via SignalR (live progress bars, status chips, folder updates)
 - Dashboard with cross-project job overview, queue positions, and wait reasons
@@ -93,9 +98,9 @@ Should you trust your 50,000-email production mailbox to software built by someo
 
 ## Status
 
-Current version: `v0.1.1`
+Current version: `v0.1.2`
 
-The migration engine is solid, the deployment is automated, and the UI doesn't look like it was built in 2003. v0.1.1 adds comprehensive job diagnostics — connection timing, cancel reasons, throughput metrics, and full error context — so you actually know what happened when something goes wrong.
+The migration engine is solid, the deployment is automated, and the UI doesn't look like it was built in 2003. v0.1.2 adds CalDAV calendar discovery — automatically detects CalDAV support during IMAP explore, shows calendar status per job, and lets you browse calendars with event counts. First step toward full calendar migration.
 
 ## License
 

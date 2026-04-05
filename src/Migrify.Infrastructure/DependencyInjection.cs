@@ -50,6 +50,25 @@ public static class DependencyInjection
         services.AddSingleton<MigrationBackgroundService>();
         services.AddHostedService(sp => sp.GetRequiredService<MigrationBackgroundService>());
 
+        // CalDAV discovery & explore
+        services.AddHttpClient("CalDavDiscovery", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(5);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false, // We handle redirects manually for well-known discovery
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        });
+        services.AddHttpClient("CalDav", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        });
+        services.AddTransient<ICalDavDiscoveryService, CalDavDiscoveryService>();
+        services.AddTransient<ICalDavExplorer, CalDavExplorer>();
+
         // Concurrency limit services
         services.AddSingleton<SystemResourceMonitor>();
         services.AddSingleton<SourceLimitProvider>();
